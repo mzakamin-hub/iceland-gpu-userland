@@ -34,7 +34,7 @@ inside_workspace() {
 }
 
 fetch_git() {
-    local url="$1" commit="$2" dir="$3" sparse="${4:-}"
+    local url="$1" commit="$2" dir="$3"
     inside_workspace "$dir"
     if [ -d "$dir/.git" ] && [ "$(git -C "$dir" rev-parse HEAD 2>/dev/null || true)" = "$commit" ]; then
         echo "== $dir already at $commit"
@@ -44,12 +44,7 @@ fetch_git() {
     mkdir -p "$dir"
     git -C "$dir" init -q
     git -C "$dir" remote add origin "$url"
-    if [ -n "$sparse" ]; then
-        # Patterns first, so the checkout materialises only the sparse paths' blobs.
-        git -C "$dir" sparse-checkout init --no-cone
-        git -C "$dir" sparse-checkout set --no-cone --stdin < "$sparse"
-    fi
-    git -C "$dir" -c protocol.version=2 fetch -q --depth 1 --filter=blob:none origin "$commit"
+    git -C "$dir" -c protocol.version=2 fetch -q --depth 1 origin "$commit"
     git -C "$dir" checkout -q FETCH_HEAD
     local head
     head="$(git -C "$dir" rev-parse HEAD)"
@@ -76,15 +71,11 @@ unixnu() {
 }
 
 mesa() {
-    local dir="$CACHE/mesa-work" commit ml patterns="$WORK/mesa-sparse.txt"
+    local dir="$CACHE/mesa-work" commit ml
     commit="$(read_pin mesa.commit)"
-    # The sparse set UniXNU records, plus the two root files the recorded patches and meson itself need.
-    python3 - "$UNIXNU/scripts/data/adreno-compiler-inputs.json" > "$patterns" <<'PY'
-import json, sys
-record = json.load(open(sys.argv[1]))
-print('\n'.join(['meson.build', 'meson.options'] + record['mesa']['sparse_directories']))
-PY
-    fetch_git "$(read_pin mesa.mirror)" "$commit" "$dir" "$patterns"
+    # A full depth-1 checkout of the pin (118 MB pack, 514 MB tree): Mesa's meson build reaches nearly every subdir, and
+    # UniXNU records sparse_directories as build *inputs*, not as a checkout that meson can configure.
+    fetch_git "$(read_pin mesa.mirror)" "$commit" "$dir"
     python3 - "$UNIXNU/scripts/data/adreno-compiler-inputs.json" "$UNIXNU" "$dir" <<'PY'
 import json, subprocess, sys
 record, unixnu, work = json.load(open(sys.argv[1])), sys.argv[2], sys.argv[3]
