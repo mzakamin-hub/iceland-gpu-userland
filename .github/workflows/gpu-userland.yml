@@ -156,6 +156,22 @@ jobs:
         with:
           python-version: '3.13'
 
+      - name: Check the macOS 27 target and the private IOGPU link
+        run: |
+          # c0 compiles for arm64e-apple-macos27.0 and links a bundle against the SDK's private IOGPU.tbd, which is what
+          # the plugin does for macOS. Cheap, and it stops a stage before the long build if the SDK cannot serve it.
+          set -euo pipefail
+          work="$RUNNER_TEMP/target-check"
+          mkdir -p "$work"
+          printf 'extern "C" void *probe(void) { return (void *)0; }\n' > "$work/b.cpp"
+          xcrun clang -target arm64e-apple-macos27.0 -isysroot "$SDK_PATH" -c "$work/b.cpp" -o "$work/b.o"
+          xcrun vtool -show-build "$work/b.o"
+          xcrun clang++ -target arm64e-apple-macos27.0 -isysroot "$SDK_PATH" -bundle -Wl,-undefined,error \
+            -F "$SDK_PATH/System/Library/PrivateFrameworks" -framework IOGPU -framework IOKit \
+            -Wl,-u,'_OBJC_CLASS_$_IOGPUMetalDevice' "$work/b.cpp" -o "$work/b.bundle"
+          otool -L "$work/b.bundle"
+          otool -hv "$work/b.bundle" | tail -n 1
+
       - name: Host tools for Turnip
         if: inputs.stage == 'c1'
         run: brew install glslang
