@@ -1,0 +1,23 @@
+{
+  "target": "macos27",
+  "runner": "macos-26",
+  "unixnu": {
+    "repository": "https://github.com/UniXNU/UniXNU",
+    "commit": "9248bdac8f06f6faa47a03304ad4e40cde5d5296",
+    "submodules": {
+      "drivers/AdrenoMetal": "c1351337d7e4ca00c80e1b7efeaf404bddc1be9e",
+      "drivers/Adreno740": "a8fa18fa0973e00504fb6618c707d9b5e16bdbbe",
+      "kits/AdrenoPM4": "282606b528b2595bc4274ea7490b62b323f35a5f",
+      "kits/AdrenoFirmware": "20ad3d7aca14bd46aecab6335c780f5413fa054b"
+    }
+  },
+  "mesa": {
+    "mirror": "https://chromium.googlesource.com/external/gitlab.freedesktop.org/mesa/mesa",
+    "commit": "85fda3b36405bcaea8bffc64aa4f2651dc90770d",
+    "patches": "unixnu/scripts/data/adreno-compiler-inputs.json"
+  },
+  "translator": {
+    "repository": "https://github.com/steelbrain/metal2vulkan",
+    "commit": "555b13d57e09bff70996a88cff64f1275256d5cf"
+  }
+}

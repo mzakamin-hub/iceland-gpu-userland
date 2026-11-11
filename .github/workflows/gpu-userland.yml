@@ -1,0 +1,272 @@
+name: GPU userland (macOS 27, arm64e)
+
+# Stage S11, route B (owner decision 12 Nov): build UniXNU's macOS GPU userland on GitHub's disposable Mac, never on a
+# project machine, and fetch every input by exact public commit. This repository holds the workflow, the pins and the
+# preparation/capture scripts only: no Apple material, no firmware, no keys, no trust cache, no personal data.
+#
+# Cost: workflow_dispatch only, one run at a time, standard macos-26 runners, 40-minute build cap (8 for the environment
+# check). The account-wide ledger is kept off-repo with the project notes.
+
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: 'c0 = environment check only; c1 = Turnip; c2 = Metal plugin + probe daemon'
+        type: choice
+        options: [c0, c1, c2]
+        required: true
+        default: c0
+      xcode:
+        description: 'Xcode to select: /Applications/Xcode_<version>.app (empty = newest installed)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+# One run at a time; a second dispatch cancels the first rather than paying for both.
+concurrency:
+  group: gpu-userland
+  cancel-in-progress: true
+
+env:
+  HOMEBREW_NO_AUTO_UPDATE: 1
+  HOMEBREW_NO_INSTALL_CLEANUP: 1
+  HOMEBREW_NO_ENV_HINTS: 1
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  environment:
+    name: c0 environment check
+    if: inputs.stage == 'c0'
+    runs-on: macos-26
+    timeout-minutes: 8
+    steps:
+      - name: Check out this repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Select Xcode
+        env:
+          XCODE_VERSION: ${{ inputs.xcode }}
+        run: bash scripts/select-xcode.sh
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+
+      - name: Report the runner, the SDK and the toolchain targets
+        run: |
+          # A report, not a gate: every probe prints its answer and the step stays green, so the run always yields facts.
+          report="$RUNNER_TEMP/c0-report.txt"
+          work="$RUNNER_TEMP/target-test"
+          mkdir -p "$work"
+          {
+            echo "== system"
+            sw_vers
+            uname -m
+            sysctl -n hw.ncpu hw.memsize
+            df -h "$GITHUB_WORKSPACE" | tail -n 1
+            echo
+            echo "== Xcode"
+            echo "selected: ${XCODE_APP:-none}"
+            xcodebuild -version || echo "PROBE FAILED: xcodebuild -version"
+            ls /Applications/Xcode*.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs 2>/dev/null \
+              || echo "PROBE FAILED: no MacOSX SDK"
+            echo "SDK: ${SDK_PATH:-none} (${SDK_VERSION:-unknown})"
+            xcrun clang --version | head -n 2 || echo "PROBE FAILED: clang --version"
+            echo
+            echo "== arm64e / macOS 27 target"
+            printf 'int f(void) { return 0; }\n' > "$work/t.c"
+            printf 'extern "C" void *probe(void) { return (void *)0; }\n' > "$work/b.cpp"
+            cat > "$work/t.mm" <<'MM'
+            #import <Foundation/Foundation.h>
+            #import <Metal/Metal.h>
+            @interface Probe : NSObject
+            @end
+            @implementation Probe
+            + (BOOL)hasDevice { return MTLCreateSystemDefaultDevice() != nil; }
+            @end
+            MM
+            if xcrun clang -target arm64e-apple-macos27.0 -isysroot "$SDK_PATH" -c "$work/t.c" -o "$work/t.o"; then
+              echo "PROBE: C compiled with -target arm64e-apple-macos27.0"
+              xcrun vtool -show-build "$work/t.o" 2>&1 || true
+              file "$work/t.o"
+              otool -hv "$work/t.o" | tail -n 1
+            else
+              echo "PROBE FAILED: C with -target arm64e-apple-macos27.0"
+            fi
+            if xcrun clang++ -target arm64e-apple-macos27.0 -isysroot "$SDK_PATH" -fobjc-arc -x objective-c++ -c "$work/t.mm" -o "$work/tmm.o"; then
+              echo "PROBE: ObjC++ with Foundation and Metal compiled"
+            else
+              echo "PROBE FAILED: ObjC++ with Foundation and Metal"
+            fi
+            # The plugin's macOS link takes IOGPUMetalDevice out of the SDK's private IOGPU.tbd; prove that link here.
+            if xcrun clang++ -target arm64e-apple-macos27.0 -isysroot "$SDK_PATH" -bundle -nostdlib \
+                 -F "$SDK_PATH/System/Library/PrivateFrameworks" -framework IOGPU -framework IOKit \
+                 -Wl,-u,_OBJC_CLASS_$_IOGPUMetalDevice "$work/b.cpp" -o "$work/b.bundle"; then
+              echo "PROBE: bundle link with -framework IOGPU and IOGPUMetalDevice: OK"
+            else
+              echo "PROBE FAILED: bundle link with -framework IOGPU"
+            fi
+            echo "IOGPU.tbd IOGPUMetalDevice mentions: $(grep -c IOGPUMetalDevice "$SDK_PATH/System/Library/PrivateFrameworks/IOGPU.framework/IOGPU.tbd" 2>/dev/null || echo missing)"
+            echo
+            echo "== toolchain"
+            rustup --version || echo "PROBE FAILED: rustup"
+            rustc --version || echo "PROBE FAILED: rustc"
+            cargo --version || echo "PROBE FAILED: cargo"
+            python3 --version
+            brew --version | head -n 1
+            echo
+            echo "== rust 1.98.0 (the bridge's pin) with rust-src for -Z build-std"
+            rustup toolchain install 1.98.0 --profile minimal --component rust-src \
+              || echo "PROBE FAILED: rustup toolchain install 1.98.0"
+            cargo +1.98.0 --version || echo "PROBE FAILED: cargo +1.98.0"
+            rustup run 1.98.0 rustc --version || echo "PROBE FAILED: rustc 1.98.0"
+            ls "$(rustup run 1.98.0 rustc --print sysroot 2>/dev/null)/lib/rustlib/src/rust/library/core/Cargo.toml" 2>/dev/null \
+              || echo "PROBE FAILED: rust-src for 1.98.0"
+            echo
+            echo "== homebrew formula availability (not installed here)"
+            brew info --json=v2 shaderc spirv-tools glslang llvm 2>/dev/null \
+              | python3 -c 'import json,sys; f=json.load(sys.stdin)["formulae"]; print("\n".join("%s %s" % (x["name"], x["versions"]["stable"]) for x in f))' \
+              || echo "PROBE FAILED: brew info"
+          } 2>&1 | tee "$report"
+
+      - name: Upload the environment report
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: c0-report
+          path: ${{ runner.temp }}/c0-report.txt
+          retention-days: 1
+          if-no-files-found: error
+
+  build:
+    name: ${{ inputs.stage }} build
+    if: inputs.stage == 'c1' || inputs.stage == 'c2'
+    runs-on: macos-26
+    timeout-minutes: 40
+    steps:
+      - name: Check out this repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Select Xcode
+        env:
+          XCODE_VERSION: ${{ inputs.xcode }}
+        run: bash scripts/select-xcode.sh
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+
+      - name: Host tools for Turnip
+        if: inputs.stage == 'c1'
+        run: brew install glslang
+
+      - name: Host tools for the plugin
+        if: inputs.stage == 'c2'
+        run: |
+          # llvm-as and llvm-objcopy for the bridge's AIR fixtures and the PAC symbol renames; shaderc (glslc) and
+          # spirv-tools (spirv-val) for the generated smoke shaders.
+          brew install llvm glslang shaderc spirv-tools
+
+      - name: Rust 1.98.0 with rust-src (arm64e std built from source)
+        if: inputs.stage == 'c2'
+        run: |
+          rustup toolchain install 1.98.0 --profile minimal --component rust-src
+          cargo +1.98.0 --version
+          rustup run 1.98.0 rustc --version
+
+      - name: Fetch the pinned sources
+        run: |
+          if [ '${{ inputs.stage }}' = 'c1' ]; then
+            bash scripts/prepare-inputs.sh unixnu mesa venv
+          else
+            bash scripts/prepare-inputs.sh unixnu mesa venv metal2vulkan
+          fi
+
+      - name: Verify the pins before building
+        run: python3 scripts/verify-pins.py
+
+      - name: Build Turnip with the Darwin kernel backend
+        if: inputs.stage == 'c1'
+        working-directory: unixnu
+        run: python3 scripts/build-turnip-darwin.py --target macos27
+
+      - name: Sign and capture Turnip's dylib
+        if: inputs.stage == 'c1'
+        run: |
+          set -euo pipefail
+          lib="unixnu/build/mesa-tu-macos27/src/freedreno/vulkan/libvulkan_freedreno.dylib"
+          # The plugin build signs its own copy the same way (build-adreno-metal-plugin.py); this one is the artifact.
+          codesign --force --sign - --pagesize 4096 --identifier org.blu-sharky.turnip "$lib"
+          mkdir -p artifacts/c1
+          cp "$lib" artifacts/c1/
+          cp unixnu/build/mesa-tu-macos27/builtin-build-profile.json artifacts/c1/
+          tail -n 400 unixnu/.cache/mesa-tu-macos27-build.log > artifacts/c1/mesa-build.log || true
+          tail -n 200 unixnu/.cache/mesa-tu-macos27-configure.log > artifacts/c1/mesa-configure.log || true
+          bash scripts/capture-signature.sh artifacts/c1/libvulkan_freedreno.dylib artifacts/c1
+          cd artifacts
+          python3 ../scripts/make-manifest.py --stage c1 --out c1/manifest.json c1
+
+      - name: Restore the Turnip build of c1
+        if: inputs.stage == 'c2'
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: c1-turnip
+          path: c1-turnip
+
+      - name: Build the Metal plugin and the probe daemon
+        if: inputs.stage == 'c2'
+        working-directory: unixnu
+        run: |
+          set -euo pipefail
+          mkdir -p build/mesa-tu-macos27/src/freedreno/vulkan
+          cp ../c1-turnip/libvulkan_freedreno.dylib build/mesa-tu-macos27/src/freedreno/vulkan/
+          cp ../c1-turnip/builtin-build-profile.json build/mesa-tu-macos27/ 2>/dev/null || true
+          # --no-replay: the prefix replay is a host-simulation capture (scripts/gen-turnip-replay.py builds and runs the
+          # desktop plugin smoke), not part of the bundle. The plugin still compiles: TurnipReplay.h is optional
+          # (NativeAdrenoUserTest.h includes it under __has_include). The owner trust module
+          # (scripts/make-owner-trust-bundle.py) is never built here; it needs Apple trust caches and is built locally.
+          python3 scripts/build-adreno-metal-plugin.py --target macos27 --no-replay
+
+      - name: Sign reports, manifest and bundle tarball
+        if: inputs.stage == 'c2'
+        run: |
+          set -euo pipefail
+          out="unixnu/build/adreno-metal-plugin-macos27"
+          bundle="$out/NativeAdrenoMetal.bundle"
+          mkdir -p artifacts/c2
+          bash scripts/capture-signature.sh "$bundle" artifacts/c2
+          bash scripts/capture-signature.sh "$bundle/Contents/MacOS/NativeAdrenoMetal" artifacts/c2
+          bash scripts/capture-signature.sh "$bundle/Contents/MacOS/libvulkan_freedreno.dylib" artifacts/c2
+          bash scripts/capture-signature.sh "$out/adrenoprobed" artifacts/c2
+          tar -czf artifacts/c2/NativeAdrenoMetal.bundle.tar.gz -C "$out" NativeAdrenoMetal.bundle
+          cp "$out/adrenoprobed" "$out/trust.json" artifacts/c2/
+          cp "$bundle/Contents/MacOS/libvulkan_freedreno.dylib" artifacts/c2/
+          tail -n 200 "$out/build-macos27.log" > artifacts/c2/bridge-build.log || true
+          cd artifacts
+          python3 ../scripts/make-manifest.py --stage c2 --out c2/manifest.json c2
+
+      - name: Upload the Turnip artifact
+        if: inputs.stage == 'c1'
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: c1-turnip
+          path: artifacts/c1
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Upload the plugin artifact
+        if: inputs.stage == 'c2'
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: c2-plugin
+          path: artifacts/c2
+          retention-days: 1
+          if-no-files-found: error
