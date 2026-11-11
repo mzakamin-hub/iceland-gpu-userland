@@ -14,7 +14,18 @@ does not hold, and must never hold:
 Every source is fetched at build time from its public repository, at an exact commit (`pins/inputs.json`), and verified
 with `git rev-parse HEAD` before anything is built (`scripts/verify-pins.py`).
 
+One deviation is carried, and only one: `patches/adrenometal-pinned-source-build.patch`, because the pinned AdrenoMetal
+(`c1351337`, the tip of UniXNU's submodule at `9248bdac`) does not compile as committed. Three lines: the journal's
+"sync every 32 lines" fragment sits outside `journal()` instead of inside it, and the asynchronous
+`newRenderPipelineStateWithDescriptor:options:completionHandler:` lost the `handle` and `pipelineBegan` locals that the
+same revision's synchronous form still declares, which its own diagnostics block three lines later reads. The patch
+restores those two locals from the call it makes and moves the fragment inside its function; it changes no behaviour
+outside diagnostics. The patch is hash-pinned in `pins/inputs.json` and re-checked on every run.
+
 ## What it builds
+
+Pinned sources: UniXNU `9248bdac` with `AdrenoMetal`, `Adreno740`, `GopFramebuffer`, `AdrenoPM4` and `AdrenoFirmware`;
+the Mesa mirror at `85fda3b` plus UniXNU's 20 recorded patches; the metal2vulkan bridge at `555b13d` plus its own 12.
 
 1. `python3 scripts/build-turnip-darwin.py --target macos27` — Mesa's freedreno Vulkan driver (Turnip) with UniXNU's
    Darwin kernel backend, `arm64e-apple-macos27.0`.

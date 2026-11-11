@@ -4,10 +4,11 @@
 # Nothing here is a copy of anybody's tree: each source is fetched from its public repository at the commit that
 # pins/inputs.json names, and every fetch is verified by `git rev-parse HEAD`. The Mesa work tree is then the pin plus
 # exactly the recorded patches from UniXNU's own scripts/data/adreno-compiler-inputs.json (the list the build script
-# validates), so no local Mesa patch is invented or left out.
+# validates), so no local Mesa patch is invented or left out. AdrenoMetal alone carries one hash-pinned patch of ours,
+# because the pinned revision does not compile (patches/adrenometal-pinned-source-build.patch says why).
 #
-# Components: unixnu (checkout + the four GPU submodules), mesa, metal2vulkan, venv (meson, ninja, mako, pyyaml,
-# packaging - Mesa refuses to configure without the last one on Python 3.12+, which has no distutils).
+# Components: unixnu (checkout + the GPU submodules), mesa, metal2vulkan, venv (meson, ninja, mako, pyyaml, packaging -
+# Mesa refuses to configure without the last one on Python 3.12+, which has no distutils).
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -17,13 +18,27 @@ UNIXNU="$WORK/unixnu"
 CACHE="$UNIXNU/.cache"
 
 read_pin() {
-    python3 - "$PINS" "$1" <<'PY'
+    python3 - "$PINS" "$1" <<'PIN'
 import json, sys
 value = json.load(open(sys.argv[1]))
 for key in sys.argv[2].split('.'):
     value = value[key]
 print(value)
-PY
+PIN
+}
+
+read_pin_list() {
+    python3 - "$PINS" "$1" <<'PIN'
+import json, sys
+value = json.load(open(sys.argv[1]))
+for key in sys.argv[2].split('.'):
+    value = value[key]
+print(' '.join(value))
+PIN
+}
+
+sha256_of() {
+    python3 -c 'import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$1"
 }
 
 # Every destructive path below is absolute and inside the workspace; refuse anything else (briefing rule 2).
@@ -59,7 +74,7 @@ fetch_git() {
 unixnu() {
     fetch_git "$(read_pin unixnu.repository)" "$(read_pin unixnu.commit)" "$UNIXNU"
     local path commit head
-    for path in drivers/AdrenoMetal drivers/Adreno740 kits/AdrenoPM4 kits/AdrenoFirmware; do
+    for path in $(read_pin_list unixnu.submodules); do
         commit="$(read_pin "unixnu.submodules.$path")"
         git -C "$UNIXNU" submodule update --init --depth 1 --filter=blob:none "$path"
         head="$(git -C "$UNIXNU/$path" rev-parse HEAD)"
@@ -69,6 +84,22 @@ unixnu() {
         fi
         echo "== $path at $commit"
     done
+    # The pinned AdrenoMetal does not compile as committed; the patch is ours, hash-pinned in pins/inputs.json, and it
+    # changes the worktree only (HEAD stays the pinned commit, which verify-pins.py re-checks).
+    local patch target expected
+    patch="$(read_pin patches.adrenometal_build.path)"
+    target="$UNIXNU/$(read_pin patches.adrenometal_build.applies_to)"
+    expected="$(read_pin patches.adrenometal_build.sha256)"
+    if [ "$(sha256_of "$HERE/$patch")" != "$expected" ]; then
+        echo "::error::$patch does not match its pinned SHA-256"
+        exit 1
+    fi
+    if git -C "$target" apply --reverse --check "$HERE/$patch" 2>/dev/null; then
+        echo "== $patch already applied"
+    else
+        git -C "$target" apply "$HERE/$patch"
+        echo "== applied $patch ($expected)"
+    fi
 }
 
 mesa() {
@@ -77,13 +108,13 @@ mesa() {
     # A full depth-1 checkout of the pin (118 MB pack, 514 MB tree): Mesa's meson build reaches nearly every subdir, and
     # UniXNU records sparse_directories as build *inputs*, not as a checkout that meson can configure.
     fetch_git "$(read_pin mesa.mirror)" "$commit" "$dir"
-    python3 - "$UNIXNU/scripts/data/adreno-compiler-inputs.json" "$UNIXNU" "$dir" <<'PY'
+    python3 - "$UNIXNU/scripts/data/adreno-compiler-inputs.json" "$UNIXNU" "$dir" <<'PATCHES'
 import json, subprocess, sys
 record, unixnu, work = json.load(open(sys.argv[1])), sys.argv[2], sys.argv[3]
 for patch in record['patches']:
     subprocess.run(['git', '-C', work, 'apply', unixnu + '/' + patch], check=True)
 print('== applied %d recorded Mesa patches' % len(record['patches']))
-PY
+PATCHES
     ml="$(git -C "$dir" rev-parse HEAD)"
     if [ "$ml" != "$commit" ]; then
         echo "::error::Mesa is at $ml, not the pinned $commit"

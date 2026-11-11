@@ -7,6 +7,7 @@
     "submodules": {
       "drivers/AdrenoMetal": "c1351337d7e4ca00c80e1b7efeaf404bddc1be9e",
       "drivers/Adreno740": "a8fa18fa0973e00504fb6618c707d9b5e16bdbbe",
+      "drivers/GopFramebuffer": "b0d812d578efa2acb005b66f73168891719af09a",
       "kits/AdrenoPM4": "282606b528b2595bc4274ea7490b62b323f35a5f",
       "kits/AdrenoFirmware": "20ad3d7aca14bd46aecab6335c780f5413fa054b"
     }
@@ -19,5 +20,12 @@
   "translator": {
     "repository": "https://github.com/steelbrain/metal2vulkan",
     "commit": "555b13d57e09bff70996a88cff64f1275256d5cf"
+  },
+  "patches": {
+    "adrenometal_build": {
+      "path": "patches/adrenometal-pinned-source-build.patch",
+      "applies_to": "drivers/AdrenoMetal",
+      "sha256": "17fe8b95768ee42476cc727ab238c8d8e63daa74773125da92bfce0fcee4d2a5"
+    }
   }
 }
