@@ -6,7 +6,8 @@
 # exactly the recorded patches from UniXNU's own scripts/data/adreno-compiler-inputs.json (the list the build script
 # validates), so no local Mesa patch is invented or left out.
 #
-# Components: unixnu (checkout + the four GPU submodules), mesa, metal2vulkan, venv (meson/ninja/mako/pyyaml).
+# Components: unixnu (checkout + the four GPU submodules), mesa, metal2vulkan, venv (meson, ninja, mako, pyyaml,
+# packaging - Mesa refuses to configure without the last one on Python 3.12+, which has no distutils).
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -97,7 +98,7 @@ metal2vulkan() {
 
 venv() {
     python3 -m venv "$CACHE/mesa-venv"
-    "$CACHE/mesa-venv/bin/python" -m pip install --disable-pip-version-check --quiet meson ninja mako pyyaml
+    "$CACHE/mesa-venv/bin/python" -m pip install --disable-pip-version-check --quiet meson ninja mako pyyaml packaging
     mkdir -p "$CACHE/mesa-tools/bin"
     "$CACHE/mesa-venv/bin/meson" --version
     "$CACHE/mesa-venv/bin/ninja" --version
