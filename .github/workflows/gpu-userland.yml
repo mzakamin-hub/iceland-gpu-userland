@@ -4,24 +4,20 @@ name: GPU userland (macOS 27, arm64e)
 # project machine, and fetch every input by exact public commit. This repository holds the workflow, the pins and the
 # preparation/capture scripts only: no Apple material, no firmware, no keys, no trust cache, no personal data.
 #
-# Cost: workflow_dispatch only, one run at a time, standard macos-26 runners, 40-minute build cap (8 for the environment
-# check). The account-wide ledger is kept off-repo with the project notes.
+# Cost: workflow_dispatch only, one run at a time, standard macos-26 runners, 40-minute cap per job (8 for the
+# environment check). The account-wide ledger is kept off-repo with the project notes.
 
 on:
   workflow_dispatch:
     inputs:
       stage:
-        description: 'c0 = environment check only; c1 = Turnip; c2 = Metal plugin + probe daemon'
+        description: 'c0 = environment check only; c12 = Turnip, then the plugin and daemon'
         type: choice
-        options: [c0, c1, c2]
+        options: [c0, c12]
         required: true
         default: c0
       xcode:
         description: 'Xcode to select: /Applications/Xcode_<version>.app (empty = newest installed)'
-        required: false
-        default: ''
-      turnip_run:
-        description: 'c2 only: the c1 run id whose c1-turnip artifact this build restores'
         required: false
         default: ''
 
@@ -79,8 +75,7 @@ jobs:
             echo "== Xcode"
             echo "selected: ${XCODE_APP:-none}"
             xcodebuild -version || echo "PROBE FAILED: xcodebuild -version"
-            ls /Applications/Xcode*.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs 2>/dev/null \
-              || echo "PROBE FAILED: no MacOSX SDK"
+            ls -d /Applications/Xcode*.app
             echo "SDK: ${SDK_PATH:-none} (${SDK_VERSION:-unknown})"
             xcrun clang --version | head -n 2 || echo "PROBE FAILED: clang --version"
             echo
@@ -102,9 +97,9 @@ jobs:
               echo "PROBE FAILED: ObjC++ with Foundation and Metal"
             fi
             # The plugin's macOS link takes IOGPUMetalDevice out of the SDK's private IOGPU.tbd; prove that link here.
-            if xcrun clang++ -target arm64e-apple-macos27.0 -isysroot "$SDK_PATH" -bundle -nostdlib \
+            if xcrun clang++ -target arm64e-apple-macos27.0 -isysroot "$SDK_PATH" -bundle -Wl,-undefined,error \
                  -F "$SDK_PATH/System/Library/PrivateFrameworks" -framework IOGPU -framework IOKit \
-                 -Wl,-u,_OBJC_CLASS_$_IOGPUMetalDevice "$work/b.cpp" -o "$work/b.bundle"; then
+                 -Wl,-u,'_OBJC_CLASS_$_IOGPUMetalDevice' "$work/b.cpp" -o "$work/b.bundle"; then
               echo "PROBE: bundle link with -framework IOGPU and IOGPUMetalDevice: OK"
             else
               echo "PROBE FAILED: bundle link with -framework IOGPU"
@@ -127,7 +122,7 @@ jobs:
               || echo "PROBE FAILED: rust-src for 1.98.0"
             echo
             echo "== homebrew formula availability (not installed here)"
-            brew info --json=v2 shaderc spirv-tools glslang llvm 2>/dev/null \
+            brew info --json=v2 shaderc spirv-tools glslang llvm bison flex 2>/dev/null \
               | python3 -c 'import json,sys; f=json.load(sys.stdin)["formulae"]; print("\n".join("%s %s" % (x["name"], x["versions"]["stable"]) for x in f))' \
               || echo "PROBE FAILED: brew info"
           } 2>&1 | tee "$report"
@@ -140,9 +135,9 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
-  build:
-    name: ${{ inputs.stage }} build
-    if: inputs.stage == 'c1' || inputs.stage == 'c2'
+  turnip:
+    name: c1 Turnip
+    if: inputs.stage == 'c12'
     runs-on: macos-26
     timeout-minutes: 40
     steps:
@@ -160,15 +155,6 @@ jobs:
         with:
           python-version: '3.13'
 
-      - name: Require the c1 run id
-        if: inputs.stage == 'c2'
-        run: |
-          # c1 and c2 are separate runs, so the dylib comes from c1's artifact by run id, never from a rebuild.
-          if [ -z '${{ inputs.turnip_run }}' ]; then
-            echo "::error::c2 needs turnip_run (the c1 run id that uploaded c1-turnip)"
-            exit 1
-          fi
-
       - name: Check the macOS 27 target and the private IOGPU link
         run: |
           # c0 compiles for arm64e-apple-macos27.0 and links a bundle against the SDK's private IOGPU.tbd, which is what
@@ -185,8 +171,7 @@ jobs:
           otool -L "$work/b.bundle"
           otool -hv "$work/b.bundle" | tail -n 1
 
-      - name: Host tools for Turnip
-        if: inputs.stage == 'c1'
+      - name: Host tools
         run: |
           # glslang: build-turnip-darwin.py refuses to run without glslangValidator. bison and flex: Mesa generates
           # ir3_parser.[ch] from ir3_parser.y and needs bison >= 3 and flex >= 2.6, while macOS ships bison 2.3 and
@@ -197,38 +182,17 @@ jobs:
           "$(brew --prefix bison)/bin/bison" --version | head -n 1
           "$(brew --prefix flex)/bin/flex" --version
 
-      - name: Host tools for the plugin
-        if: inputs.stage == 'c2'
-        run: |
-          # llvm-as and llvm-objcopy for the bridge's AIR fixtures and the PAC symbol renames; shaderc (glslc) and
-          # spirv-tools (spirv-val) for the generated smoke shaders.
-          brew install llvm glslang shaderc spirv-tools
-
-      - name: Rust 1.98.0 with rust-src (arm64e std built from source)
-        if: inputs.stage == 'c2'
-        run: |
-          rustup toolchain install 1.98.0 --profile minimal --component rust-src
-          cargo +1.98.0 --version
-          rustup run 1.98.0 rustc --version
-
       - name: Fetch the pinned sources
-        run: |
-          if [ '${{ inputs.stage }}' = 'c1' ]; then
-            bash scripts/prepare-inputs.sh unixnu mesa venv
-          else
-            bash scripts/prepare-inputs.sh unixnu mesa venv metal2vulkan
-          fi
+        run: bash scripts/prepare-inputs.sh unixnu mesa venv
 
       - name: Verify the pins before building
         run: python3 scripts/verify-pins.py
 
       - name: Build Turnip with the Darwin kernel backend
-        if: inputs.stage == 'c1'
         working-directory: unixnu
         run: python3 scripts/build-turnip-darwin.py --target macos27
 
       - name: Sign and capture Turnip's dylib
-        if: inputs.stage == 'c1'
         run: |
           set -euo pipefail
           lib="unixnu/build/mesa-tu-macos27/src/freedreno/vulkan/libvulkan_freedreno.dylib"
@@ -243,18 +207,69 @@ jobs:
           cd artifacts
           python3 ../scripts/make-manifest.py --stage c1 --out c1/manifest.json c1
 
+      - name: Build logs on failure
+        if: failure()
+        run: |
+          for log in unixnu/.cache/mesa-tu-macos27-configure.log unixnu/.cache/mesa-tu-macos27-build.log; do
+            [ -f "$log" ] || continue
+            echo "== tail of $log"
+            tail -n 120 "$log"
+          done
+
+      - name: Upload the Turnip artifact
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: c1-turnip
+          path: artifacts/c1
+          retention-days: 1
+          if-no-files-found: error
+
+  plugin:
+    name: c2 plugin and daemon
+    if: inputs.stage == 'c12'
+    needs: turnip
+    runs-on: macos-26
+    timeout-minutes: 40
+    steps:
+      - name: Check out this repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Select Xcode
+        env:
+          XCODE_VERSION: ${{ inputs.xcode }}
+        run: bash scripts/select-xcode.sh
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+
+      - name: Host tools
+        run: |
+          # llvm-as and llvm-objcopy for the bridge's AIR fixtures and the PAC symbol renames; shaderc (glslc) and
+          # spirv-tools (spirv-val) for the generated smoke shaders.
+          brew install llvm glslang shaderc spirv-tools
+
+      - name: Rust 1.98.0 with rust-src (arm64e std built from source)
+        run: |
+          rustup toolchain install 1.98.0 --profile minimal --component rust-src
+          cargo +1.98.0 --version
+          rustup run 1.98.0 rustc --version
+
+      - name: Fetch the pinned sources
+        run: bash scripts/prepare-inputs.sh unixnu mesa venv metal2vulkan
+
+      - name: Verify the pins before building
+        run: python3 scripts/verify-pins.py
+
       - name: Restore the Turnip build of c1
-        if: inputs.stage == 'c2'
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
           name: c1-turnip
           path: c1-turnip
-          run-id: ${{ inputs.turnip_run }}
-          # The automatic token, contents: read, to read this repository's own artifact of an earlier run.
-          github-token: ${{ github.token }}
 
       - name: Build the Metal plugin and the probe daemon
-        if: inputs.stage == 'c2'
         working-directory: unixnu
         run: |
           set -euo pipefail
@@ -268,7 +283,6 @@ jobs:
           python3 scripts/build-adreno-metal-plugin.py --target macos27 --no-replay
 
       - name: Sign reports, manifest and bundle tarball
-        if: inputs.stage == 'c2'
         run: |
           set -euo pipefail
           out="unixnu/build/adreno-metal-plugin-macos27"
@@ -288,24 +302,14 @@ jobs:
       - name: Build logs on failure
         if: failure()
         run: |
-          for log in unixnu/.cache/mesa-tu-macos27-configure.log unixnu/.cache/mesa-tu-macos27-build.log \
-                     unixnu/build/adreno-metal-plugin-macos27/build-macos27.log; do
+          for log in unixnu/build/adreno-metal-plugin-macos27/build-macos27.log \
+                     unixnu/.cache/mesa-tu-macos27-configure.log unixnu/.cache/mesa-tu-macos27-build.log; do
             [ -f "$log" ] || continue
             echo "== tail of $log"
-            tail -n 120 "$log"
+            tail -n 150 "$log"
           done
 
-      - name: Upload the Turnip artifact
-        if: inputs.stage == 'c1'
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
-        with:
-          name: c1-turnip
-          path: artifacts/c1
-          retention-days: 1
-          if-no-files-found: error
-
       - name: Upload the plugin artifact
-        if: inputs.stage == 'c2'
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: c2-plugin
