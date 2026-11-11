@@ -20,6 +20,10 @@ on:
         description: 'Xcode to select: /Applications/Xcode_<version>.app (empty = newest installed)'
         required: false
         default: ''
+      turnip_run:
+        description: 'c2 only: the c1 run id whose c1-turnip artifact this build restores'
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -156,6 +160,15 @@ jobs:
         with:
           python-version: '3.13'
 
+      - name: Require the c1 run id
+        if: inputs.stage == 'c2'
+        run: |
+          # c1 and c2 are separate runs, so the dylib comes from c1's artifact by run id, never from a rebuild.
+          if [ -z '${{ inputs.turnip_run }}' ]; then
+            echo "::error::c2 needs turnip_run (the c1 run id that uploaded c1-turnip)"
+            exit 1
+          fi
+
       - name: Check the macOS 27 target and the private IOGPU link
         run: |
           # c0 compiles for arm64e-apple-macos27.0 and links a bundle against the SDK's private IOGPU.tbd, which is what
@@ -236,6 +249,9 @@ jobs:
         with:
           name: c1-turnip
           path: c1-turnip
+          run-id: ${{ inputs.turnip_run }}
+          # The automatic token, contents: read, to read this repository's own artifact of an earlier run.
+          github-token: ${{ github.token }}
 
       - name: Build the Metal plugin and the probe daemon
         if: inputs.stage == 'c2'
