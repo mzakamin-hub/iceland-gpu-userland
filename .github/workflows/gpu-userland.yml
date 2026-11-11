@@ -174,7 +174,15 @@ jobs:
 
       - name: Host tools for Turnip
         if: inputs.stage == 'c1'
-        run: brew install glslang
+        run: |
+          # glslang: build-turnip-darwin.py refuses to run without glslangValidator. bison and flex: Mesa generates
+          # ir3_parser.[ch] from ir3_parser.y and needs bison >= 3 and flex >= 2.6, while macOS ships bison 2.3 and
+          # flex 2.5; both formulas are keg-only, so their bins go on PATH for the build step.
+          brew install glslang bison flex
+          echo "$(brew --prefix bison)/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix flex)/bin" >> "$GITHUB_PATH"
+          "$(brew --prefix bison)/bin/bison" --version | head -n 1
+          "$(brew --prefix flex)/bin/flex" --version
 
       - name: Host tools for the plugin
         if: inputs.stage == 'c2'
@@ -260,6 +268,16 @@ jobs:
           tail -n 200 "$out/build-macos27.log" > artifacts/c2/bridge-build.log || true
           cd artifacts
           python3 ../scripts/make-manifest.py --stage c2 --out c2/manifest.json c2
+
+      - name: Build logs on failure
+        if: failure()
+        run: |
+          for log in unixnu/.cache/mesa-tu-macos27-configure.log unixnu/.cache/mesa-tu-macos27-build.log \
+                     unixnu/build/adreno-metal-plugin-macos27/build-macos27.log; do
+            [ -f "$log" ] || continue
+            echo "== tail of $log"
+            tail -n 120 "$log"
+          done
 
       - name: Upload the Turnip artifact
         if: inputs.stage == 'c1'
