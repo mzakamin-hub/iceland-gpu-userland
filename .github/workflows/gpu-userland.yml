@@ -83,15 +83,7 @@ jobs:
             echo "== arm64e / macOS 27 target"
             printf 'int f(void) { return 0; }\n' > "$work/t.c"
             printf 'extern "C" void *probe(void) { return (void *)0; }\n' > "$work/b.cpp"
-            cat > "$work/t.mm" <<'MM'
-            #import <Foundation/Foundation.h>
-            #import <Metal/Metal.h>
-            @interface Probe : NSObject
-            @end
-            @implementation Probe
-            + (BOOL)hasDevice { return MTLCreateSystemDefaultDevice() != nil; }
-            @end
-            MM
+            printf '#import <Foundation/Foundation.h>\n#import <Metal/Metal.h>\n@interface Probe : NSObject\n@end\n@implementation Probe\n+ (BOOL)hasDevice { return MTLCreateSystemDefaultDevice() != nil; }\n@end\n' > "$work/t.mm"
             if xcrun clang -target arm64e-apple-macos27.0 -isysroot "$SDK_PATH" -c "$work/t.c" -o "$work/t.o"; then
               echo "PROBE: C compiled with -target arm64e-apple-macos27.0"
               xcrun vtool -show-build "$work/t.o" 2>&1 || true
