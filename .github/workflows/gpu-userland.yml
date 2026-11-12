@@ -11,9 +11,9 @@ on:
   workflow_dispatch:
     inputs:
       stage:
-        description: 'c0 = environment check; c12 = Turnip, plugin and daemon; shim = q33e owner boot shim'
+        description: 'c0 = environment; c12 = Turnip, plugin and daemon; shim = q33e boot shim; absentd = S5 stand-in'
         type: choice
-        options: [c0, c12, shim]
+        options: [c0, c12, shim, absentd]
         required: true
         default: c0
       xcode:
@@ -360,5 +360,50 @@ jobs:
         with:
           name: q33e-shim
           path: artifacts/shim
+          retention-days: 1
+          if-no-files-found: error
+
+  absentd:
+    name: S5 absent-service stand-in
+    if: inputs.stage == 'absentd'
+    runs-on: macos-26
+    timeout-minutes: 10
+    steps:
+      - name: Check out this repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Select Xcode
+        env:
+          XCODE_VERSION: ${{ inputs.xcode }}
+        run: bash scripts/select-xcode.sh
+
+      - name: Check the copied source against its pin
+        run: |
+          # The source is UniXNU's file with one provenance line prepended; pins/inputs.json records both hashes.
+          python3 -c 'import hashlib, json; p = json.load(open("pins/inputs.json"))["sources"]["absentd"]; a = hashlib.sha256(open(p["path"], "rb").read()).hexdigest(); print(p["path"], a); assert a == p["sha256"], "the copied source differs from its pin"; print("PASS: unchanged since it was copied from", p["upstream_path"], "at", p["commit"][:12])'
+
+      - name: Build and sign the stand-in
+        run: |
+          # Mirrors scripts/absent-service/build.py at UniXNU 9248bdac: Apple's clang for arm64e-apple-macos27.0 with
+          # -Os -Wall -Wextra -Werror -fblocks and CoreFoundation, then an ad-hoc 4 KiB signature with the identifier
+          # org.unixnu.absentd and no entitlements. The addon (NGPUADD2, bin/unixnu-absentd), its hash and the owner
+          # trust entry are the QEMU session's steps, not this job's.
+          set -euo pipefail
+          mkdir -p artifacts/absentd
+          xcrun --sdk macosx clang -target arm64e-apple-macos27.0 -isysroot "$SDK_PATH" -Os -Wall -Wextra -Werror \
+            -fblocks -framework CoreFoundation -o artifacts/absentd/unixnu-absentd absent-service/absentd.c
+          codesign --force --sign - --pagesize 4096 --identifier org.unixnu.absentd artifacts/absentd/unixnu-absentd
+          codesign --verify --strict artifacts/absentd/unixnu-absentd
+          bash scripts/capture-signature.sh artifacts/absentd/unixnu-absentd artifacts/absentd
+          cd artifacts
+          python3 ../scripts/make-manifest.py --stage absentd --out absentd/manifest.json absentd
+
+      - name: Upload the stand-in artifact
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: unixnu-absentd
+          path: artifacts/absentd
           retention-days: 1
           if-no-files-found: error

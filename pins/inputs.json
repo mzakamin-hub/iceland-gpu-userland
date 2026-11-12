@@ -27,5 +27,16 @@
       "applies_to": "drivers/AdrenoMetal",
       "sha256": "17fe8b95768ee42476cc727ab238c8d8e63daa74773125da92bfce0fcee4d2a5"
     }
+  },
+  "sources": {
+    "absentd": {
+      "path": "absent-service/absentd.c",
+      "from": "https://github.com/UniXNU/UniXNU",
+      "commit": "9248bdac8f06f6faa47a03304ad4e40cde5d5296",
+      "upstream_path": "scripts/absent-service/absentd.c",
+      "upstream_sha256": "75c4333bcac915a6b0efda296347a6b7c3437382575f3af3cdd73aec1cb2df3e",
+      "sha256": "64be13ebe39deca7de2dce7054b9345e375bb1151d517258b4812e57811c3dae",
+      "note": "the pin's file with one provenance line prepended; the rest is byte-identical"
+    }
   }
 }
