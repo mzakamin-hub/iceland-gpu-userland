@@ -11,9 +11,9 @@ on:
   workflow_dispatch:
     inputs:
       stage:
-        description: 'c0 = environment check only; c12 = Turnip, then the plugin and daemon'
+        description: 'c0 = environment check; c12 = Turnip, plugin and daemon; shim = q33e owner boot shim'
         type: choice
-        options: [c0, c12]
+        options: [c0, c12, shim]
         required: true
         default: c0
       xcode:
@@ -314,5 +314,51 @@ jobs:
         with:
           name: c2-plugin
           path: artifacts/c2
+          retention-days: 1
+          if-no-files-found: error
+
+  shim:
+    name: q33e owner boot shim
+    if: inputs.stage == 'shim'
+    runs-on: macos-26
+    timeout-minutes: 10
+    steps:
+      - name: Check out this repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Select Xcode
+        env:
+          XCODE_VERSION: ${{ inputs.xcode }}
+        run: bash scripts/select-xcode.sh
+
+      - name: Fetch UniXNU at its pin
+        run: bash scripts/prepare-inputs.sh unixnu
+
+      - name: Verify the pins before building
+        run: python3 scripts/verify-pins.py unixnu
+
+      - name: Build and sign the owner boot shim
+        run: |
+          # Mirrors scripts/build-boot-runtime.py's build_boot_shims() at the pin (its lines 100-104): Apple's clang for
+          # arm64e-apple-macos27.0 against the macOS SDK with -O2 -Wall -Werror, then an ad-hoc signature with 4 KiB pages
+          # and the identifier org.unixnu.apfs_boot_util. No entitlements, no network, one C file
+          # (scripts/macos-boot-shims/apfs_boot_util.c). The addon packing (NGPUADD2, addon-add-dir.py) is the QEMU
+          # session's step, not this job's.
+          set -euo pipefail
+          mkdir -p artifacts/shim
+          xcrun --sdk macosx clang -target arm64e-apple-macos27.0 -isysroot "$SDK_PATH" -O2 -Wall -Werror \
+            unixnu/scripts/macos-boot-shims/apfs_boot_util.c -o artifacts/shim/apfs_boot_util
+          codesign --force --sign - --pagesize 4096 --identifier org.unixnu.apfs_boot_util artifacts/shim/apfs_boot_util
+          bash scripts/capture-signature.sh artifacts/shim/apfs_boot_util artifacts/shim
+          cd artifacts
+          python3 ../scripts/make-manifest.py --stage shim --out shim/manifest.json shim
+
+      - name: Upload the shim artifact
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: q33e-shim
+          path: artifacts/shim
           retention-days: 1
           if-no-files-found: error

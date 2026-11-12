@@ -47,8 +47,8 @@ caches. It is built locally, later, from the CDHashes this workflow reports.
 | Stage | What | Timeout |
 |---|---|---|
 | `c0` | environment check: Xcode list and selection, macOS SDK, `arm64e-apple-macos27.0` compile and `-framework IOGPU` link, rust 1.98.0 + `rust-src`, python, disk, brew formula availability. No build. | 8 min |
-| `c1` | Turnip → `libvulkan_freedreno.dylib` | 40 min |
-| `c2` | plugin + daemon, with the c1 dylib restored from its artifact | 40 min |
+| `c12` | job `turnip`: Turnip → `libvulkan_freedreno.dylib`; job `plugin` (needs it): plugin + daemon, the dylib passed inside the run | 40 min each |
+| `shim` | the q33e owner boot shim: `scripts/macos-boot-shims/apfs_boot_util.c` built `arm64e-apple-macos27.0` and ad-hoc signed with `--pagesize 4096 --identifier org.unixnu.apfs_boot_util`, as `build-boot-runtime.py` does. No entitlements. | 10 min |
 
 Artifacts are retained for one day and deleted as soon as they have been downloaded to the project machine.
 

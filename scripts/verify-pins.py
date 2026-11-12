@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Check that every fetched source is at the commit pins/inputs.json names, and that our patches are applied."""
+"""Check that every fetched source is at the commit pins/inputs.json names, and that our patches are applied.
+
+    verify-pins.py [unixnu] [mesa] [translator]     # no argument checks all three groups
+"""
 import json
 import subprocess
 import sys
@@ -18,11 +21,18 @@ def head(path):
 
 def main():
     pins = json.loads(PINS.read_text())
-    expected = {'unixnu': pins['unixnu']['commit']}
-    for path, commit in pins['unixnu']['submodules'].items():
-        expected['unixnu/' + path] = commit
-    expected['unixnu/.cache/mesa-work'] = pins['mesa']['commit']
-    if Path('unixnu/.cache/gpu-reference/metal2vulkan/.git').exists():
+    groups = sys.argv[1:] or ['unixnu', 'mesa', 'translator']
+    unknown = set(groups) - {'unixnu', 'mesa', 'translator'}
+    if unknown:
+        sys.exit('unknown group(s): %s' % ', '.join(sorted(unknown)))
+    expected = {}
+    if 'unixnu' in groups:
+        expected['unixnu'] = pins['unixnu']['commit']
+        for path, commit in pins['unixnu']['submodules'].items():
+            expected['unixnu/' + path] = commit
+    if 'mesa' in groups:
+        expected['unixnu/.cache/mesa-work'] = pins['mesa']['commit']
+    if 'translator' in groups:
         expected['unixnu/.cache/gpu-reference/metal2vulkan'] = pins['translator']['commit']
     missing = []
     for path, commit in expected.items():
@@ -37,7 +47,7 @@ def main():
     if missing:
         print('::error::not fetched: %s' % ', '.join(missing))
         return 1
-    for name, patch in pins['patches'].items():
+    for name, patch in (pins['patches'].items() if 'unixnu' in groups else ()):
         target = 'unixnu/' + patch['applies_to']
         result = git('-C', target, 'apply', '--reverse', '--check', str(PINS.parent.parent / patch['path']))
         applied = result.returncode == 0
