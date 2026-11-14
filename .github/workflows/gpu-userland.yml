@@ -187,7 +187,7 @@ jobs:
         run: bash scripts/prepare-inputs.sh unixnu mesa venv
 
       - name: Verify the pins before building
-        run: python3 scripts/verify-pins.py
+        run: python3 scripts/verify-pins.py unixnu mesa
 
       - name: Build Turnip with the Darwin kernel backend
         working-directory: unixnu
