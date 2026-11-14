@@ -4,8 +4,8 @@ name: GPU userland (macOS 27, arm64e)
 # project machine, and fetch every input by exact public commit. This repository holds the workflow, the pins and the
 # preparation/capture scripts only: no Apple material, no firmware, no keys, no trust cache, no personal data.
 #
-# Cost: workflow_dispatch only, one run at a time, standard macos-26 runners, a cap per job: Turnip 12 min, plugin
-# and daemon 32 min (3.5 and 23 min in run 43121582356), 8 for the environment check, 10 for the shim and absentd.
+# Cost: workflow_dispatch only, one run at a time, standard macos-26 runners, a cap per job: Turnip and plugin
+# 40 min each (the repository is public: standard runners are free), 8 for the environment check, 10 for the shim and absentd.
 # The account-wide ledger is kept off-repo with the project notes.
 
 on:
@@ -140,7 +140,7 @@ jobs:
     name: c1 Turnip
     if: inputs.stage == 'c12'
     runs-on: macos-26
-    timeout-minutes: 12
+    timeout-minutes: 40
     steps:
       - name: Check out this repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -230,7 +230,7 @@ jobs:
     if: inputs.stage == 'c12'
     needs: turnip
     runs-on: macos-26
-    timeout-minutes: 32
+    timeout-minutes: 40
     steps:
       - name: Check out this repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
