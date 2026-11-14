@@ -26,6 +26,11 @@
       "path": "patches/adrenometal-pinned-source-build.patch",
       "applies_to": "drivers/AdrenoMetal",
       "sha256": "17fe8b95768ee42476cc727ab238c8d8e63daa74773125da92bfce0fcee4d2a5"
+    },
+    "adrenoprobed_macos_gate": {
+      "path": "patches/adrenoprobed-macos-gate.patch",
+      "applies_to": "drivers/AdrenoMetal",
+      "sha256": "6e5996b712a1d38c3ebf8b7bbe8effc1fe4a9afb6ce67416a85a51f12296a4b9"
     }
   },
   "sources": {

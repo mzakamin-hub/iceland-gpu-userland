@@ -1,0 +1,28 @@
+# adrenoprobed on macOS (S11 g6, our patch to AdrenoMetal at the pin c1351337, MIT upstream): the probe daemon matched
+# IOAcceleratorES only (NativeAdrenoProbeDaemon.cpp:23), which macOS does not have, so it never found a service and
+# exited 3. Under TARGET_OS_OSX it now matches AGXAccelerator, the IOAccelerator the kernel publishes and the name the
+# plugin already gives Turnip (NativeAdrenoMetalPlugin.mm:395, TU_DARWIN_SERVICE). Checked to apply at the pin after
+# adrenometal-pinned-source-build.patch. Owner's go to dispatch: 14 Nov 2026.
+--- a/NativeAdrenoProbeDaemon.cpp	2026-11-13 23:33:19.747027658 +0200
++++ b/NativeAdrenoProbeDaemon.cpp	2026-11-13 23:33:19.765354637 +0200
+@@ -4,6 +4,7 @@
+ // test once, then writes the system log for the UFS log export (NativeOsLogExport.mm) and exits. The test result reaches the kernel through
+ // the driver's progress markers and SetMetadata.
+ #include <stdlib.h>
++#include <TargetConditionals.h>
+ #include "NativeAdrenoUserTest.h"
+ 
+ extern "C" void nativeOsLogExport();
+@@ -20,7 +21,12 @@
+     // The service is published a few seconds into boot (after the GPU is powered); poll for up to two minutes.
+     unsigned port = 0;
+     for (unsigned i = 0; i < 240 && !port; ++i) {
++#if TARGET_OS_OSX
++        // macOS has no IOAcceleratorES: the kernel publishes AGXAccelerator (an IOAccelerator; TU_DARWIN_SERVICE's name)
++        port = getService(0, matching("AGXAccelerator"));
++#else
+         port = getService(0, matching("IOAcceleratorES"));
++#endif
+         if (!port) usleep(500000);
+     }
+     const int status = !port ? 3 : adrenoUserTest(port, "adrenoprobed") >= 0 ? 0 : 4;

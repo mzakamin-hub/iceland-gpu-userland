@@ -4,8 +4,9 @@
 # Nothing here is a copy of anybody's tree: each source is fetched from its public repository at the commit that
 # pins/inputs.json names, and every fetch is verified by `git rev-parse HEAD`. The Mesa work tree is then the pin plus
 # exactly the recorded patches from UniXNU's own scripts/data/adreno-compiler-inputs.json (the list the build script
-# validates), so no local Mesa patch is invented or left out. AdrenoMetal alone carries one hash-pinned patch of ours,
-# because the pinned revision does not compile (patches/adrenometal-pinned-source-build.patch says why).
+# validates), so no local Mesa patch is invented or left out. AdrenoMetal alone carries hash-pinned patches of ours:
+# the pinned revision does not compile (patches/adrenometal-pinned-source-build.patch says why), and its probe daemon
+# needs the macOS accelerator's name (patches/adrenoprobed-macos-gate.patch).
 #
 # Components: unixnu (checkout + the GPU submodules), mesa, metal2vulkan, venv (meson, ninja, mako, pyyaml, packaging -
 # Mesa refuses to configure without the last one on Python 3.12+, which has no distutils).
@@ -84,22 +85,25 @@ unixnu() {
         fi
         echo "== $path at $commit"
     done
-    # The pinned AdrenoMetal does not compile as committed; the patch is ours, hash-pinned in pins/inputs.json, and it
+    # Our hash-pinned patches, in pins/inputs.json order: AdrenoMetal's pinned revision does not compile as committed
+    # (adrenometal_build), and its probe daemon looks only for the iOS IOAcceleratorES (adrenoprobed_macos_gate). Each
     # changes the worktree only (HEAD stays the pinned commit, which verify-pins.py re-checks).
-    local patch target expected
-    patch="$(read_pin patches.adrenometal_build.path)"
-    target="$UNIXNU/$(read_pin patches.adrenometal_build.applies_to)"
-    expected="$(read_pin patches.adrenometal_build.sha256)"
-    if [ "$(sha256_of "$HERE/$patch")" != "$expected" ]; then
-        echo "::error::$patch does not match its pinned SHA-256"
-        exit 1
-    fi
-    if git -C "$target" apply --reverse --check "$HERE/$patch" 2>/dev/null; then
-        echo "== $patch already applied"
-    else
-        git -C "$target" apply "$HERE/$patch"
-        echo "== applied $patch ($expected)"
-    fi
+    local name patch target expected
+    for name in $(read_pin_list patches); do
+        patch="$(read_pin "patches.$name.path")"
+        target="$UNIXNU/$(read_pin "patches.$name.applies_to")"
+        expected="$(read_pin "patches.$name.sha256")"
+        if [ "$(sha256_of "$HERE/$patch")" != "$expected" ]; then
+            echo "::error::$patch does not match its pinned SHA-256"
+            exit 1
+        fi
+        if git -C "$target" apply --reverse --check "$HERE/$patch" 2>/dev/null; then
+            echo "== $patch already applied"
+        else
+            git -C "$target" apply "$HERE/$patch"
+            echo "== applied $patch ($expected)"
+        fi
+    done
 }
 
 mesa() {
