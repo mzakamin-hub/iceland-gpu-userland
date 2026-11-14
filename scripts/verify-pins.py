@@ -3,6 +3,7 @@
 
     verify-pins.py [unixnu] [mesa] [translator]     # no argument checks all three groups
 """
+import hashlib
 import json
 import subprocess
 import sys
@@ -55,7 +56,33 @@ def main():
         if not applied:
             print('::error::%s is not applied: %s' % (patch['path'], result.stderr.strip()))
             return 1
-    print('PASS: %d checkouts at their pins, %d patches applied' % (len(expected), len(pins['patches'])))
+    mesa_patches = pins.get('mesa_patches', {}) if 'mesa' in groups else {}
+    if mesa_patches:
+        # Ours are appended to UniXNU's record (prepare-inputs.sh record_ours); the record must end with them, each copy must
+        # be our hash-pinned file, and UniXNU's own guard must reconstruct the pinned Mesa from the tree (as the build does).
+        record = json.loads(Path('unixnu/scripts/data/adreno-compiler-inputs.json').read_text())
+        ours = []
+        for name, patch in mesa_patches.items():
+            local = PINS.parent.parent / patch['path']
+            if hashlib.sha256(local.read_bytes()).hexdigest() != patch['sha256']:
+                print('::error::%s does not match its pinned SHA-256' % patch['path'])
+                return 1
+            recorded = 'patches/mesa/' + local.name
+            copy = Path('unixnu', recorded)
+            if not copy.is_file() or copy.read_bytes() != local.read_bytes():
+                print('::error::%s is not our pinned %s' % (copy, patch['path']))
+                return 1
+            ours.append(recorded)
+        if record['patches'][-len(ours):] != ours:
+            print('::error::the Mesa record does not end with our patches: %s' % record['patches'][-len(ours):])
+            return 1
+        sys.path.insert(0, str(Path('unixnu/scripts').resolve()))
+        from mesa_patch_identity import validate_recorded_patches
+        validate_recorded_patches(Path('unixnu').resolve(), Path('unixnu/.cache/mesa-work').resolve(), record)
+        for recorded in ours:
+            print('%-52s %s' % (recorded, 'recorded and applied'))
+    print('PASS: %d checkouts at their pins, %d patches applied, %d Mesa patches of ours in the record'
+          % (len(expected), len(pins['patches']) if 'unixnu' in groups else 0, len(mesa_patches)))
     return 0
 
 

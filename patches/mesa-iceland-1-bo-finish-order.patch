@@ -1,0 +1,47 @@
+# mesa-iceland-1 (ours, S11 gpuu-1; MIT like the Mesa file it changes). darwin_bo_finish zeroes the BO's sparse-array slot
+# inside the retire lock, before the reap can give the BO's handle back to the kernel; UniXNU d8210e08's
+# turnip-darwin-kmd.patch zeroes it after the unlock, where another thread's BoAlloc may already own the slot. Ported from
+# our iPadOS port's mesa-iceland-1 (31 Oct 2026, written against that port's Redwood back end), which followed
+# ShueiTsuki/data-a-live's root cause of their GPU hangs on another Adreno port. Our kernel never hands out a handle twice
+# (AGXAccelerator's BoAlloc), so on iceland the change is defensive. Appended to UniXNU's recorded Mesa patches by
+# scripts/prepare-inputs.sh, in pins/inputs.json order.
+diff --git a/src/freedreno/vulkan/tu_knl_darwin.cc b/src/freedreno/vulkan/tu_knl_darwin.cc
+index d684250..1a168d4 100644
+--- a/src/freedreno/vulkan/tu_knl_darwin.cc
++++ b/src/freedreno/vulkan/tu_knl_darwin.cc
+@@ -1150,6 +1150,7 @@ darwin_bo_finish(struct tu_device *dev, struct tu_bo *bo)
+ 
+    struct darwin_retire_state *retire = (struct darwin_retire_state *)dev->darwin_retire;
+    pthread_mutex_lock(&retire->lock);
++   bool queued = false;
+    darwin_reap_locked(dev, retire);
+    if (retire->count == retire->capacity && retire->failure == VK_SUCCESS) {
+       /* The ring grows, its records in order from the head. */
+@@ -1173,17 +1174,24 @@ darwin_bo_finish(struct tu_device *dev, struct tu_bo *bo)
+                                bo->darwin_token, fence, bo->darwin_alloc_size != 0, bo->darwin_read_only};
+       ++retire->count;
+       ++retire->enqueued;
++      /* iceland (mesa-iceland-1): the BO structs live in a sparse array indexed by the kernel's handle, and the reap below may
++       * give this handle back to the kernel at once (its fence already passed). Another thread's BoAlloc can then be given the
++       * same handle and fill this very struct, which a memset after the unlock would wipe under its new owner. So the slot is
++       * zeroed here, inside the retire lock and before the reap; the record above already holds what the reap needs. */
++      memset(bo, 0, sizeof(*bo));
++      queued = true;
+       darwin_reap_locked(dev, retire);
+    } else if (retire->failure == VK_SUCCESS) {
+       /* No reusable range is reported on error. The kernel still owns the handle
+        * and view; connection teardown must drain them, even if this record cannot fit. */
+       retire->failure = vk_device_set_lost(&dev->vk, "deferred BO queue cannot grow; retaining native allocation");
+    }
++   /* The BO structs live in a sparse array: zero the entry to mark it free. Not queued: the kernel keeps the handle, so no
++    * other BO can be given this slot. */
++   if (!queued)
++      memset(bo, 0, sizeof(*bo));
+    pthread_mutex_unlock(&retire->lock);
+ 
+-   /* The BO structs live in a sparse array: zero the entry to mark it free. */
+-   memset(bo, 0, sizeof(*bo));
+-
+    u_rwlock_rdunlock(&dev->dma_bo_lock);
+ }
+ 

@@ -3,10 +3,10 @@
   "runner": "macos-26",
   "unixnu": {
     "repository": "https://github.com/UniXNU/UniXNU",
-    "commit": "9248bdac8f06f6faa47a03304ad4e40cde5d5296",
+    "commit": "d8210e089792946841ca23a8ff39f3b3641b002f",
     "submodules": {
-      "drivers/AdrenoMetal": "c1351337d7e4ca00c80e1b7efeaf404bddc1be9e",
-      "drivers/Adreno740": "a8fa18fa0973e00504fb6618c707d9b5e16bdbbe",
+      "drivers/AdrenoMetal": "73d582fd4d5772b1f5fa83581a25077a16f2b6cd",
+      "drivers/Adreno740": "54b41b8f59e90a167f6f75160739c5f825945fbc",
       "drivers/GopFramebuffer": "b0d812d578efa2acb005b66f73168891719af09a",
       "kits/AdrenoPM4": "282606b528b2595bc4274ea7490b62b323f35a5f",
       "kits/AdrenoFirmware": "20ad3d7aca14bd46aecab6335c780f5413fa054b"
@@ -22,15 +22,33 @@
     "commit": "555b13d57e09bff70996a88cff64f1275256d5cf"
   },
   "patches": {
-    "adrenometal_build": {
-      "path": "patches/adrenometal-pinned-source-build.patch",
-      "applies_to": "drivers/AdrenoMetal",
-      "sha256": "17fe8b95768ee42476cc727ab238c8d8e63daa74773125da92bfce0fcee4d2a5"
-    },
     "adrenoprobed_macos_gate": {
       "path": "patches/adrenoprobed-macos-gate.patch",
       "applies_to": "drivers/AdrenoMetal",
       "sha256": "6e5996b712a1d38c3ebf8b7bbe8effc1fe4a9afb6ce67416a85a51f12296a4b9"
+    },
+    "turnip_smoke_macos_service": {
+      "path": "patches/adrenometal-turnip-smoke-macos-service.patch",
+      "applies_to": "drivers/AdrenoMetal",
+      "sha256": "f43e50e39621b316245f089de042f5179b3326b3cf630e82400f83ae39a67034"
+    }
+  },
+  "mesa_patches": {
+    "mesa_iceland_1": {
+      "path": "patches/mesa-iceland-1-bo-finish-order.patch",
+      "sha256": "9242559aa6f47efc4b9ea485883302a11a9f21fb0d482eb937419a7bda29c4ca"
+    },
+    "mesa_iceland_2": {
+      "path": "patches/mesa-iceland-2-ir3-round-default.patch",
+      "sha256": "38bdd09a2e4ca4ed0f4fb5939dabff178d51cefdefb227e89f32675e76feb264"
+    },
+    "mesa_iceland_4": {
+      "path": "patches/mesa-iceland-4-macos-service.patch",
+      "sha256": "91dc91d297ac6ee611879e2c13504c2217fb858d0e3a566ec5ee4478dcfd5c3c"
+    },
+    "mesa_iceland_5": {
+      "path": "patches/mesa-iceland-5-dsb-submit.patch",
+      "sha256": "9c2f9d9cab90b0ddd54db998dae6e5240fbdc26942f21461127af50af032215e"
     }
   },
   "sources": {

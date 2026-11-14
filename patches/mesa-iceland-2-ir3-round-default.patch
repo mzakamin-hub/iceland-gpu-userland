@@ -1,0 +1,21 @@
+# mesa-iceland-2 (ours, S11 gpuu-1; MIT like the Mesa file it changes). ir3's create_cov() sets the cov rounding field only
+# from a declared SPIR-V float-controls mode; with none declared (every shader of the AIR front end) the field keeps zero,
+# ROUND_ZERO, so integer-to-float and f32-to-f16 conversions truncate, while NIR's constant folder rounds the same
+# conversions to nearest even. The GPU is asked for round-to-nearest-even in that case. Finding (measured on an Adreno 7c+
+# Gen 3): superboyyy/hakios-arm64e-dada f1ae906 userland/tools/mesa/ir3-round-default.patch, carried by our iPadOS port as
+# mesa-iceland-2; this hunk and its comment are written here, not copied. No UniXNU Mesa patch touches the rounding field.
+diff --git a/src/freedreno/ir3/ir3_compiler_nir.c b/src/freedreno/ir3/ir3_compiler_nir.c
+index a06d6f8..b3992e5 100644
+--- a/src/freedreno/ir3/ir3_compiler_nir.c
++++ b/src/freedreno/ir3/ir3_compiler_nir.c
+@@ -410,6 +410,10 @@ create_cov(struct ir3_context *ctx, unsigned nrpt,
+          set_cat1_round(cov.rpts, nrpt, ROUND_EVEN);
+       else if (rounding_mode == nir_rounding_mode_rtz)
+          set_cat1_round(cov.rpts, nrpt, ROUND_ZERO);
++      else
++         /* iceland (mesa-iceland-2): no mode declared (every AIR shader on this port). The field's zero is ROUND_ZERO,
++          * truncation; NIR's constant folder rounds the same conversions to nearest even, so the GPU is asked for that too. */
++         set_cat1_round(cov.rpts, nrpt, ROUND_EVEN);
+    }
+ 
+    return cov;

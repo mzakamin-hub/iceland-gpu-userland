@@ -1,0 +1,39 @@
+# mesa-iceland-5 (ours, S11 gpuu-1; MIT like the Mesa files it changes). A `dsb sy` before every kernel Submit
+# (darwin_submit_chunk) and at the end of vkEndCommandBuffer (Apple arm64 only). Command streams are CPU stores into
+# write-combined BO views, possibly recorded on another core than the one that submits; the kernel's barrier before it moves
+# the ring's write pointer completes only the submitting core's stores. Same fix as piano's D1 on the A830 (lenzhang/
+# UniXNU-xiaomipad8pro b9b3649 docs/drivers/gpu-userspace.md:25-26, "0001-turnip-darwin-native-a830.patch"); written here.
+diff --git a/src/freedreno/vulkan/tu_cmd_buffer.cc b/src/freedreno/vulkan/tu_cmd_buffer.cc
+index a729da1..3581ad3 100644
+--- a/src/freedreno/vulkan/tu_cmd_buffer.cc
++++ b/src/freedreno/vulkan/tu_cmd_buffer.cc
+@@ -5629,6 +5629,12 @@ tu_EndCommandBuffer(VkCommandBuffer commandBuffer)
+    tu_cs_end(&cmd_buffer->draw_cs);
+    tu_cs_end(&cmd_buffer->draw_epilogue_cs);
+ 
++#if defined(__APPLE__) && defined(__aarch64__)
++   /* iceland (mesa-iceland-5): the command stream was written through write-combined views on this core and may be submitted
++    * from another; complete these stores before the command buffer can be handed over (darwin_submit_chunk issues the other). */
++   __asm__ volatile("dsb sy" ::: "memory");
++#endif
++
+    return vk_command_buffer_end(&cmd_buffer->vk);
+ }
+ TU_GENX(tu_EndCommandBuffer);
+diff --git a/src/freedreno/vulkan/tu_knl_darwin.cc b/src/freedreno/vulkan/tu_knl_darwin.cc
+index 3b4f834..1d5ae9a 100644
+--- a/src/freedreno/vulkan/tu_knl_darwin.cc
++++ b/src/freedreno/vulkan/tu_knl_darwin.cc
+@@ -1508,6 +1508,12 @@ darwin_submit_chunk(struct tu_queue *queue, const NativeAdrenoAbiSubmitBuffer *e
+    for (unsigned i = 0; i < count; i++)
+       req.buffers[i] = entries[i];
+ 
++   /* iceland (mesa-iceland-5): command streams are CPU stores into write-combined BO views, possibly made on another core;
++    * the kernel's barrier before it moves the ring's write pointer orders only the submitting core's own stores. A full-system
++    * DSB here completes this core's; tu_EndCommandBuffer issues one on the recording core. */
++#if defined(__aarch64__)
++   __asm__ volatile("dsb sy" ::: "memory");
++#endif
+    for (;;) {
+       NativeAdrenoAbiSubmitReply reply = {};
+       const uint64_t began = tu_trace_clock_ns();

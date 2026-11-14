@@ -14,18 +14,32 @@ does not hold, and must never hold:
 Every source is fetched at build time from its public repository, at an exact commit (`pins/inputs.json`), and verified
 with `git rev-parse HEAD` before anything is built (`scripts/verify-pins.py`).
 
-One deviation is carried, and only one: `patches/adrenometal-pinned-source-build.patch`, because the pinned AdrenoMetal
-(`c1351337`, the tip of UniXNU's submodule at `9248bdac`) does not compile as committed. Three lines: the journal's
-"sync every 32 lines" fragment sits outside `journal()` instead of inside it, and the asynchronous
-`newRenderPipelineStateWithDescriptor:options:completionHandler:` lost the `handle` and `pipelineBegan` locals that the
-same revision's synchronous form still declares, which its own diagnostics block three lines later reads. The patch
-restores those two locals from the call it makes and moves the fragment inside its function; it changes no behaviour
-outside diagnostics. The patch is hash-pinned in `pins/inputs.json` and re-checked on every run.
+Our own patches are few, each hash-pinned in `pins/inputs.json`, re-checked on every run, and either ours or a change to an
+MIT upstream file under that file's licence. Each file's header says why it exists and where the finding came from.
+
+| Patch | Applies to | Why |
+|---|---|---|
+| `adrenoprobed-macos-gate.patch` | AdrenoMetal | the probe daemon matched only iPadOS' `IOAcceleratorES`; on macOS it matches `AGXAccelerator` |
+| `adrenometal-turnip-smoke-macos-service.patch` | AdrenoMetal | the daemon's Turnip phase defaulted `TU_DARWIN_SERVICE` to `IOAcceleratorES`; macOS: `AGXAccelerator` |
+| `mesa-iceland-1-bo-finish-order.patch` | Mesa, after UniXNU's record | a freed BO's slot is zeroed inside the retire lock, before its handle can be handed out again |
+| `mesa-iceland-2-ir3-round-default.patch` | Mesa, after UniXNU's record | `cov` rounds to nearest even when no rounding mode is declared (it truncated) |
+| `mesa-iceland-4-macos-service.patch` | Mesa, after UniXNU's record | Turnip's own default service on macOS is `AGXAccelerator` |
+| `mesa-iceland-5-dsb-submit.patch` | Mesa, after UniXNU's record | `dsb sy` before every Submit and at the end of `vkEndCommandBuffer` |
+
+The Mesa patches are appended to UniXNU's own record (`scripts/data/adreno-compiler-inputs.json`) in the checkout, so
+UniXNU's build guard (`scripts/mesa_patch_identity.py`) checks them with the rest. Not carried, on purpose:
+`mesa-iceland-3` (no CPU wait on an already-fenced sync): UniXNU's `darwin_queue_submit` already waits only for syncs that
+no submission has resolved yet. No `gpu_id` special case for the A840: Mesa `85fda3b`'s table matches chip `0x44050a31` by
+its `0xffff44050A31` entry ("Adreno (TM) 840", fuse-id wildcard) whatever `gpu_id` the back end decodes.
+
+The compile fix this repository carried for AdrenoMetal `c1351337` (`adrenometal-pinned-source-build.patch`) is gone:
+`73d582f` has both defects fixed upstream.
 
 ## What it builds
 
-Pinned sources: UniXNU `9248bdac` with `AdrenoMetal`, `Adreno740`, `GopFramebuffer`, `AdrenoPM4` and `AdrenoFirmware`;
-the Mesa mirror at `85fda3b` plus UniXNU's 20 recorded patches; the metal2vulkan bridge at `555b13d` plus its own 12.
+Pinned sources: UniXNU `d8210e08` (main, 14 Nov 2026) with `AdrenoMetal` `73d582f`, `Adreno740` `54b41b8`,
+`GopFramebuffer`, `AdrenoPM4` and `AdrenoFirmware`; the Mesa mirror at `85fda3b` plus UniXNU's 23 recorded patches and our
+four; the metal2vulkan bridge at `555b13d` plus its own 12.
 
 1. `python3 scripts/build-turnip-darwin.py --target macos27` — Mesa's freedreno Vulkan driver (Turnip) with UniXNU's
    Darwin kernel backend, `arm64e-apple-macos27.0`.

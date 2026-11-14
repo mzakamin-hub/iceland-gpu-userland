@@ -4,9 +4,9 @@
 # Nothing here is a copy of anybody's tree: each source is fetched from its public repository at the commit that
 # pins/inputs.json names, and every fetch is verified by `git rev-parse HEAD`. The Mesa work tree is then the pin plus
 # exactly the recorded patches from UniXNU's own scripts/data/adreno-compiler-inputs.json (the list the build script
-# validates), so no local Mesa patch is invented or left out. AdrenoMetal alone carries hash-pinned patches of ours:
-# the pinned revision does not compile (patches/adrenometal-pinned-source-build.patch says why), and its probe daemon
-# needs the macOS accelerator's name (patches/adrenoprobed-macos-gate.patch).
+# validates), with our hash-pinned Mesa patches appended to that record (record_ours), so no Mesa change is left out of
+# the build's own check. AdrenoMetal carries hash-pinned patches of ours too: its probe daemon and its Turnip smoke need
+# the macOS accelerator's name (patches/adrenoprobed-macos-gate.patch, patches/adrenometal-turnip-smoke-macos-service.patch).
 #
 # Components: unixnu (checkout + the GPU submodules), mesa, metal2vulkan, venv (meson, ninja, mako, pyyaml, packaging -
 # Mesa refuses to configure without the last one on Python 3.12+, which has no distutils).
@@ -85,9 +85,9 @@ unixnu() {
         fi
         echo "== $path at $commit"
     done
-    # Our hash-pinned patches, in pins/inputs.json order: AdrenoMetal's pinned revision does not compile as committed
-    # (adrenometal_build), and its probe daemon looks only for the iOS IOAcceleratorES (adrenoprobed_macos_gate). Each
-    # changes the worktree only (HEAD stays the pinned commit, which verify-pins.py re-checks).
+    # Our hash-pinned patches, in pins/inputs.json order: AdrenoMetal's probe daemon and its Turnip smoke look only for
+    # the iOS IOAcceleratorES (adrenoprobed_macos_gate, turnip_smoke_macos_service). Each changes the worktree only
+    # (HEAD stays the pinned commit, which verify-pins.py re-checks).
     local name patch target expected
     for name in $(read_pin_list patches); do
         patch="$(read_pin "patches.$name.path")"
@@ -106,9 +106,38 @@ unixnu() {
     done
 }
 
+# Our hash-pinned Mesa patches (pins/inputs.json mesa_patches, in that order) join UniXNU's record: each is copied into
+# unixnu/patches/mesa/ and appended to scripts/data/adreno-compiler-inputs.json, so the Mesa tree is still exactly the pin
+# plus the record, and build-turnip-darwin.py's own guard (mesa_patch_identity.validate_recorded_patches) covers ours too.
+# Like the AdrenoMetal patches this changes UniXNU's worktree only (HEAD stays the pin).
+record_ours() {
+    local name patch expected
+    for name in $(read_pin_list mesa_patches); do
+        patch="$(read_pin "mesa_patches.$name.path")"
+        expected="$(read_pin "mesa_patches.$name.sha256")"
+        if [ "$(sha256_of "$HERE/$patch")" != "$expected" ]; then
+            echo "::error::$patch does not match its pinned SHA-256"
+            exit 1
+        fi
+        cp "$HERE/$patch" "$UNIXNU/patches/mesa/$(basename "$patch")"
+    done
+    python3 - "$PINS" "$UNIXNU/scripts/data/adreno-compiler-inputs.json" <<'RECORD'
+import json, os, sys
+pins, path = json.load(open(sys.argv[1])), sys.argv[2]
+record = json.load(open(path))
+ours = ['patches/mesa/' + os.path.basename(p['path']) for p in pins.get('mesa_patches', {}).values()]
+record['patches'] = [p for p in record['patches'] if p not in ours] + ours
+with open(path, 'w') as stream:
+    json.dump(record, stream, indent=2)
+    stream.write('\n')
+print('== %d recorded Mesa patches, the last %d ours' % (len(record['patches']), len(ours)))
+RECORD
+}
+
 mesa() {
     local dir="$CACHE/mesa-work" commit ml
     commit="$(read_pin mesa.commit)"
+    record_ours
     # A full depth-1 checkout of the pin (118 MB pack, 514 MB tree): Mesa's meson build reaches nearly every subdir, and
     # UniXNU records sparse_directories as build *inputs*, not as a checkout that meson can configure.
     fetch_git "$(read_pin mesa.mirror)" "$commit" "$dir"

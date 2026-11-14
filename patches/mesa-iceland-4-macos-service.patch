@@ -1,0 +1,31 @@
+# mesa-iceland-4 (ours, S11 gpuu-1; MIT like the Mesa file it changes). UniXNU d8210e08's Darwin back end
+# (turnip-darwin-kmd.patch, dw_open_connection) defaults TU_DARWIN_SERVICE to IOAcceleratorES, iPadOS' accelerator. On
+# macOS the kernel publishes AGXAccelerator (an IOAccelerator, open type 0x4147), the name the Metal plugin sets itself
+# (AdrenoMetal NativeAdrenoMetalPlugin.mm:398); any other Vulkan program found no service. Under TARGET_OS_OSX the default
+# is AGXAccelerator; iPadOS keeps its own.
+diff --git a/src/freedreno/vulkan/tu_knl_darwin.cc b/src/freedreno/vulkan/tu_knl_darwin.cc
+index 1a168d4..3b4f834 100644
+--- a/src/freedreno/vulkan/tu_knl_darwin.cc
++++ b/src/freedreno/vulkan/tu_knl_darwin.cc
+@@ -14,6 +14,7 @@
+ #include <unistd.h>
+ 
+ #include <IOKit/IOKitLib.h>
++#include <TargetConditionals.h>
+ #include <dispatch/dispatch.h>
+ #include <mach/mach.h>
+ 
+@@ -195,7 +196,13 @@ dw_open_connection(struct tu_instance *instance)
+     * type (default 0x4147, the type the driver serves to the plugin). NativeAdrenoGpuPublished with type 0 is the unsandboxed direct form. */
+    const char *service_name = getenv("TU_DARWIN_SERVICE");
+    if (!service_name || !*service_name)
++#if TARGET_OS_OSX
++      /* iceland (mesa-iceland-4): macOS has no IOAcceleratorES. The kernel publishes AGXAccelerator, an IOAccelerator that
++       * serves open type 0x4147 (the name the Metal plugin already sets; a Vulkan program that is not the plugin found none). */
++      service_name = "AGXAccelerator";
++#else
+       service_name = "IOAcceleratorES";
++#endif
+    const char *type_text = getenv("TU_DARWIN_OPEN_TYPE");
+    uint32_t open_type = type_text && *type_text ? (uint32_t)strtoul(type_text, NULL, 0) : 0x4147u;
+    const bool direct = !strcmp(service_name, "NativeAdrenoGpuPublished");
