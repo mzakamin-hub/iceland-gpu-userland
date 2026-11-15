@@ -1,0 +1,89 @@
+# AdrenoMetal (macOS): the Mac GPU profile, part 2 (only with agx-mac-profile=1 / NATIVE_METAL_MAC_PROFILE=1; off by default).
+# iceland's own code (MIT, as the file it patches); the facts are SnapMetal's (research/refs/snapmetal-2026-11-15b 8fe64cb,
+# AdrenoMetal/AdrenoMTLDevice.m, MIT; nothing copied). With the profile: featureProfile answers 10001 (Mac2 + Common1-3; the IOGPU
+# shim's 0 is an Apple ordinal), iosurfaceReadOnlyTextureAlignmentBytes, iosurfaceTextureAlignmentBytes and
+# deviceLinearReadOnlyTextureAlignmentBytes answer 16 (64 there sent Core Image's blur into MPSImageGaussianBlur with a nil source),
+# isFramebufferReadSupported and supportsMemorylessRenderTargets answer NO, and Core Animation's CA_DISABLE_GENERIC_SHADERS is set
+# (its generic pipeline needs framebuffer fetch). Applies after adrenometal-mac-gpu-profile.patch.
+diff --git a/NativeBridgeMetalFrontend.mm b/NativeBridgeMetalFrontend.mm
+index c28da51..7c2cbdd 100644
+--- a/NativeBridgeMetalFrontend.mm
++++ b/NativeBridgeMetalFrontend.mm
+@@ -4349,6 +4349,7 @@ static bool pipelineArchives(NSArray *list,std::vector<NmbBinaryArchive *> &arch
+ @end
+ #if TARGET_OS_OSX
+ static uint64_t askAnswer(SEL cmd,NSUInteger arg);   // (iceland: below, with the device queries)
++static bool macProfile();
+ #endif
+ @interface NBDeviceMethods : NSObject
+ @end
+@@ -4369,6 +4370,10 @@ static void fillBaseLimits(id device);
+  // iceland (macOS): the runtime's own answer, asked directly. With the Mac GPU profile the device's minimumLinearTextureAlignmentForPixelFormat:
+  // answers at least 64 (macProfile), and a 64-byte IOSurface alignment sent Core Image's blur into MPS with a nil source (macos-uke
+  // gpu/plugin/0001-macos-windowserver.patch, which keeps this answer at the runtime's for that reason). Without the profile nothing changes.
++ // With the profile it is 16, Metal's own and the runtime's IOSurface alignment (its iosurfaceReadOnlyTextureAlignmentBytes): the
++ // runtime's per-format linear answer can be 64 or more on this GPU, and 64 here sent Core Image's blur into MPSImageGaussianBlur with
++ // a nil source, an assertion abort (SnapMetal AdrenoMTLDevice.m, which leaves this to the base class for that reason).
++ if(macProfile())return 16;
+  return (NSUInteger)askAnswer(sel_registerName("minimumLinearTextureAlignmentForPixelFormat:"),MTLPixelFormatRGBA16Float);
+ #else
+  return ((NSUInteger (*)(id,SEL,NSUInteger))objc_msgSend)(self,sel_registerName("minimumLinearTextureAlignmentForPixelFormat:"),MTLPixelFormatRGBA16Float);
+@@ -4953,6 +4958,35 @@ static NSUInteger macLinearAlignment(id,SEL cmd,NSUInteger format) {
+  const NSUInteger own=(NSUInteger)askAnswer(cmd,format);
+  return own<64?64:own;
+ }
++// The profile's fixed answers (installAnswers). featureProfile 10001 is Metal's ordinal of a Mac2 + Common1-3 GPU (0..13 are Apple GPU
++// ordinals; the shim's 0 is one of them), so Metal's own view of the device's families is the one supportsFamily: gives (SnapMetal
++// AdrenoMTLDevice.m: 10000 Common1/2, 10001 Mac2 + Common1-3, 10002 also Metal3). Metal, IconRendering, SkyLight, RenderBox and
++// CoreComposite read it on 26C5035r; _MTLGetMTLCompilerLLVMVersionForDevice reads it for a stitched library (below 8: the default
++// compiler version), which the profile's missing function pointers keep Core Image from building.
++static uint64_t macFeatureProfile(id,SEL) {return 10001;}
++static NSUInteger macSurfaceAlignment(id,SEL) {return 16;}
++static BOOL macNo(id,SEL) {return NO;}
++// Core Animation's generic pipeline blends in the shader through framebuffer fetch, which the profile does not offer: it draws with it
++// while a specialised pipeline compiles, and without fetch its blur, backdrop and rounded corners come out black (SnapMetal). Its debug
++// option CA_DISABLE_GENERIC_SHADERS makes it wait for the specialised pipeline. Set in the environment (read at QuartzCore's first use)
++// and, where QuartzCore is loaded already, as the live option through its exported CAGetDebugOptionEnvVariableName / CASetDebugOption.
++// An explicit CA_DISABLE_GENERIC_SHADERS or CA_FORCE_GENERIC_SHADERS is left as it is.
++static void macDisableGenericShaders() {
++ static dispatch_once_t once;
++ dispatch_once(&once,^{
++  if(getenv("CA_DISABLE_GENERIC_SHADERS") || getenv("CA_FORCE_GENERIC_SHADERS"))return;
++  setenv("CA_DISABLE_GENERIC_SHADERS","1",0);
++  auto name=(const char *(*)(int))dlsym(RTLD_DEFAULT,"CAGetDebugOptionEnvVariableName");
++  auto set=(void (*)(int,bool))dlsym(RTLD_DEFAULT,"CASetDebugOption");
++  for(int i=0;name && set && i<4096;i++) {
++   const char *option=name(i);
++   if(!option)break;
++   if(strcmp(option,"CA_DISABLE_GENERIC_SHADERS"))continue;
++   dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE,0),^{set(i,true);});
++   break;
++  }
++ });
++}
+ #endif
+ static BOOL familyForCaller(id self,SEL _cmd,NSInteger family) {
+ #if TARGET_OS_OSX
+@@ -5056,7 +5090,21 @@ static void installAnswers(Class cls) {
+   }
+   SEL linear=sel_registerName("minimumLinearTextureAlignmentForPixelFormat:");
+   if(!class_addMethod(cls,linear,(IMP)macLinearAlignment,"Q24@0:8Q16"))class_replaceMethod(cls,linear,(IMP)macLinearAlignment,"Q24@0:8Q16");
+-  GLOG(@"native-metal: Mac GPU profile (agx-mac-profile=1): Common1-3 and Mac2, no Apple family, linear rows of 64 bytes or more");
++  // installed here, before the IOGPU shim adds its featureProfile 0 (it adds only what the device does not answer)
++  const struct {const char *name;IMP imp;const char *types;} fixed[]={
++   {"featureProfile",(IMP)macFeatureProfile,"Q16@0:8"},
++   {"iosurfaceTextureAlignmentBytes",(IMP)macSurfaceAlignment,"Q16@0:8"},
++   {"deviceLinearReadOnlyTextureAlignmentBytes",(IMP)macSurfaceAlignment,"Q16@0:8"},
++   {"isFramebufferReadSupported",(IMP)macNo,"B16@0:8"},
++   {"supportsMemorylessRenderTargets",(IMP)macNo,"B16@0:8"},
++  };
++  for(const auto &f:fixed) {
++   SEL sel=sel_registerName(f.name);
++   if(!class_addMethod(cls,sel,f.imp,f.types))class_replaceMethod(cls,sel,f.imp,f.types);
++  }
++  macDisableGenericShaders();
++  GLOG(@"native-metal: Mac GPU profile (agx-mac-profile=1): Common1-3 and Mac2 (featureProfile 10001), no Apple family, linear rows of 64 "
++      "bytes or more, IOSurface and read-only linear alignment 16, no framebuffer fetch (CA_DISABLE_GENERIC_SHADERS)");
+  }
+ #endif
+ }
