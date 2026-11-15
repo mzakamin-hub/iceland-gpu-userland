@@ -1,0 +1,262 @@
+name: Shader check (translator + ir3, Linux)
+
+# Our own Metal test shaders (shaders/*.metal) through the two compilers of the tablet's Metal path, with no GPU and no
+# QEMU: the pinned metal2vulkan (AIR to SPIR-V, spirv-val on every module) and Turnip's ir3 compiler, reached by
+# creating each pipeline on Turnip over Mesa's no-op drm-shim as the Adreno 840. A refusal by either compiler, a SPIR-V
+# module that lacks what its case names, or a module that differs from its golden hash fails the run.
+#
+# No Apple file is read or stored: the shaders are ours, the only Apple tool is the Metal compiler on the macOS job
+# (shaders to AIR), and the AIR objects are run artifacts and a run cache, never committed. No metallib anywhere.
+#
+# Cost: workflow_dispatch only. The macOS job runs only when the shaders changed since the last run (their AIR is
+# cached by content): about one minute. Everything else is Linux: about two minutes with the tool cache, about twenty
+# when a pin or a patch changed and Mesa and the translator are rebuilt.
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: 'turnip = the device Turnip reports on the shim; or a profile stem from metal2vulkan (vk12-floor, roadmap-2022, ...)'
+        required: false
+        default: 'turnip'
+      driver:
+        description: 'yes = also create each pipeline on Turnip (ir3); no = translator and SPIR-V checks only'
+        type: choice
+        options: ['yes', 'no']
+        default: 'yes'
+      xcode:
+        description: 'Xcode for the AIR job: /Applications/Xcode_<version>.app (empty = newest installed)'
+        required: false
+        default: ''
+      metal_toolchain:
+        description: 'fail = stop if the selected Xcode has no Metal compiler; download = let Xcode fetch its Metal toolchain component'
+        type: choice
+        options: [fail, download]
+        default: fail
+
+permissions:
+  contents: read
+
+concurrency:
+  group: shader-check
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  plan:
+    name: is the shaders' AIR cached?
+    runs-on: ubuntu-26.04
+    timeout-minutes: 3
+    outputs:
+      air-key: ${{ steps.key.outputs.key }}
+      air-hit: ${{ steps.air.outputs.cache-hit }}
+    steps:
+      - name: Check out this repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Key of the shaders
+        id: key
+        env:
+          SOURCES: ${{ hashFiles('shaders/*.metal', 'shaders/cases.json', 'scripts/compile-air.sh') }}
+          XCODE_VERSION: ${{ inputs.xcode }}
+        run: echo "key=air-${SOURCES}-${XCODE_VERSION//[^A-Za-z0-9._-]/_}" >> "$GITHUB_OUTPUT"
+
+      - name: Look for the AIR of exactly these shaders
+        id: air
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: air
+          key: ${{ steps.key.outputs.key }}
+          lookup-only: true
+
+  air:
+    name: shaders to AIR (macOS, only when they changed)
+    needs: plan
+    if: needs.plan.outputs.air-hit != 'true'
+    runs-on: macos-26
+    timeout-minutes: 6
+    steps:
+      - name: Check out this repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Select Xcode
+        env:
+          XCODE_VERSION: ${{ inputs.xcode }}
+        run: bash scripts/select-xcode.sh
+
+      - name: Compile the shaders to AIR
+        env:
+          METAL_TOOLCHAIN: ${{ inputs.metal_toolchain }}
+        run: bash scripts/compile-air.sh shaders air
+
+      - name: Upload the AIR objects
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: air
+          path: air
+          retention-days: 1
+          if-no-files-found: error
+
+  check:
+    name: translate, validate, compile on Turnip
+    needs: [plan, air]
+    # The macOS job is skipped when the AIR is cached; run after it either way, unless it failed.
+    if: ${{ !cancelled() && needs.plan.result == 'success' && (needs.air.result == 'success' || needs.air.result == 'skipped') }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out this repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+
+      - name: The AIR of these shaders, from the cache
+        if: needs.plan.outputs.air-hit == 'true'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: air
+          key: ${{ needs.plan.outputs.air-key }}
+          fail-on-cache-miss: true
+
+      - name: The AIR of these shaders, from this run's macOS job
+        if: needs.plan.outputs.air-hit != 'true'
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: air
+          path: air
+
+      - name: Keep the AIR for the next run
+        if: needs.plan.outputs.air-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: air
+          key: ${{ needs.plan.outputs.air-key }}
+
+      - name: No metallib, and only what the cases name
+        run: |
+          set -euo pipefail
+          ls -l air
+          if find air -type f \( -name '*.metallib' -o -name '*.mtlb' \) | grep -q .; then
+            echo "::error::a metallib in the AIR folder"; exit 1
+          fi
+          # A metallib starts with MTLB; an AIR object is LLVM bitcode (BC 0xC0DE, or its 0x0B17C0DE wrapper).
+          for f in air/*.air; do
+            magic="$(head -c 4 "$f" | od -An -tx1 | tr -d ' \n')"
+            case "$magic" in
+              4243c0de|dec0170b) ;;
+              *) echo "::error::$f is not LLVM bitcode (starts $magic)"; exit 1 ;;
+            esac
+          done
+
+      - name: Host tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          # llvm: llvm-as for the translator's .ll inputs (none of ours, its own tests' habit); spirv-tools: spirv-val,
+          # which the translator runs on every module, and spirv-dis; vulkan-tools: vulkaninfo, which writes the
+          # device profile; the rest is what Mesa's Turnip and drm-shim need to configure and build.
+          sudo apt-get install -y --no-install-recommends llvm spirv-tools vulkan-tools libvulkan-dev libvulkan1 \
+            glslang-tools bison flex pkgconf libdrm-dev libexpat1-dev libzstd-dev zlib1g-dev libelf-dev
+          spirv-val --version | head -n 1
+          vulkaninfo --version || true
+
+      - name: The built tools, from the cache
+        id: tools
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: products
+          key: shader-tools-${{ runner.os }}-${{ hashFiles('pins/inputs.json', 'patches/**', 'scripts/prepare-inputs.sh', 'scripts/build-shader-tools.sh') }}
+
+      - name: Fetch the pinned sources
+        if: steps.tools.outputs.cache-hit != 'true'
+        run: bash scripts/prepare-inputs.sh unixnu mesa venv metal2vulkan
+
+      - name: Verify the pins before building
+        if: steps.tools.outputs.cache-hit != 'true'
+        run: python3 scripts/verify-pins.py
+
+      - name: Build the translator, Turnip and the drm-shim
+        if: steps.tools.outputs.cache-hit != 'true'
+        run: bash scripts/build-shader-tools.sh "$GITHUB_WORKSPACE/products"
+
+      - name: Keep the built tools for the next run
+        if: steps.tools.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: products
+          key: ${{ steps.tools.outputs.cache-primary-key }}
+
+      - name: Build pipeline-check
+        run: |
+          set -euo pipefail
+          cat products/versions.txt
+          cc -std=c11 -O1 -Wall -Wextra -Werror -o products/pipeline-check tools/pipeline-check/pipeline_check.c -lvulkan
+
+      - name: Turnip on the no-op drm-shim, as the Adreno 840
+        if: inputs.driver == 'yes' || inputs.profile == 'turnip'
+        run: |
+          set -euo pipefail
+          shim="$GITHUB_WORKSPACE/products/mesa/lib/libfreedreno_noop_drm_shim.so"
+          icd="$(ls "$GITHUB_WORKSPACE"/products/mesa/share/vulkan/icd.d/freedreno_icd*.json | head -n 1)"
+          [ -f "$shim" ] && [ -f "$icd" ]
+          # A hosted runner has no GPU; the shim answers the msm ioctls itself and touches no device node.
+          ls -l /dev/dri 2>/dev/null || echo "no /dev/dri on this runner"
+          {
+            echo "SHIM_LIBRARY=$shim"
+            echo "VK_DRIVER_FILES=$icd"
+            echo "FD_GPU_ID=840"
+            echo "MESA_SHADER_CACHE_DISABLE=true"
+          } >> "$GITHUB_ENV"
+          mkdir -p out
+          LD_PRELOAD="$shim" VK_DRIVER_FILES="$icd" FD_GPU_ID=840 vulkaninfo --summary | tee out/vulkaninfo-summary.txt
+          grep -q 'Adreno (TM) 840' out/vulkaninfo-summary.txt || { echo "::error::Turnip did not open as the Adreno 840"; exit 1; }
+          # The Khronos profile of that device: what the translator compiles for when the profile input is "turnip".
+          # vulkaninfo names the file itself (VP_VULKANINFO_<device>_<driver version>.json) unless -o is honoured.
+          (cd out && LD_PRELOAD="$shim" VK_DRIVER_FILES="$icd" FD_GPU_ID=840 vulkaninfo --json=0 -o turnip-a840-profile.json > vulkaninfo-json.log 2>&1) || true
+          if [ ! -s out/turnip-a840-profile.json ]; then
+            written="$(ls out/VP_VULKANINFO_*.json 2>/dev/null | head -n 1 || true)"
+            [ -n "$written" ] || { cat out/vulkaninfo-json.log; echo "::error::vulkaninfo wrote no profile"; exit 1; }
+            mv "$written" out/turnip-a840-profile.json
+          fi
+          ls -l out/turnip-a840-profile.json
+
+      - name: Check the shaders
+        env:
+          PROFILE: ${{ inputs.profile }}
+          DRIVER: ${{ inputs.driver }}
+        run: |
+          set -euo pipefail
+          case "$PROFILE" in
+            turnip) profile=out/turnip-a840-profile.json ;;
+            *[!A-Za-z0-9._-]*) echo "::error::profile: a stem of letters, digits, dot, dash or underscore"; exit 1 ;;
+            *) # A profile committed in metal2vulkan: read from the pin, fetched if the tool cache skipped the fetch.
+               [ -d unixnu/.cache/gpu-reference/metal2vulkan ] || bash scripts/prepare-inputs.sh metal2vulkan
+               profile="unixnu/.cache/gpu-reference/metal2vulkan/crates/metal2vulkan-validation/profiles/$PROFILE.json" ;;
+          esac
+          [ -f "$profile" ] || { echo "::error::no profile $profile"; exit 1; }
+          extra=()
+          [ "$DRIVER" = yes ] || extra+=(--no-driver)
+          [ -d shaders/golden ] && extra+=(--golden shaders/golden)
+          # The shim is preloaded into pipeline-check alone (--preload), never into the translator or the tools.
+          python3 scripts/shader-check.py --air air --translator products/metal2vulkan --profile "$profile" \
+            --pipeline-check products/pipeline-check --preload "$SHIM_LIBRARY" --out out ${extra[@]+"${extra[@]}"}
+
+      - name: Upload the report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: shader-check
+          path: out
+          retention-days: 1
+          if-no-files-found: warn

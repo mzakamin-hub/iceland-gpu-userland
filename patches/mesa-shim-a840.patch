@@ -1,0 +1,21 @@
+Ours, for the Linux shader-check job only (never part of the Turnip that ships): Mesa's no-op drm-shim for msm gets an
+entry for the Adreno 840 as iceland reports it (chip id 0x44050a31), so Turnip can be opened on a Linux runner as that
+GPU (FD_GPU_ID=840) and its ir3 compiler run over SPIR-V with no hardware. Mesa 85fda3b's device table already matches
+the chip id (its 0xffff44050A31 entry). MIT, as the file.
+
+--- a/src/freedreno/drm-shim/freedreno_noop.c
++++ b/src/freedreno/drm-shim/freedreno_noop.c
+@@ -318,6 +318,13 @@
+       .chip_id = 0x44050000,
+       .gmem_size = 12 * 1024 * 1024,
+    },
++   {
++      /* iceland (OnePlus Pad 4, SM8850): the chip id the tablet's GPU reports. The GMEM size is the 830 entry's, not a
++       * measured one; nothing the shader-check job does depends on it (no rendering). */
++      .gpu_id = 840,
++      .chip_id = 0x44050a31,
++      .gmem_size = 12 * 1024 * 1024,
++   },
+ };
+ 
+ static void

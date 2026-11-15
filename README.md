@@ -4,8 +4,8 @@ Stage S11 of the OnePlus Pad 4 (`iceland`, SM8850) macOS port, route B (owner de
 GPU userland on GitHub's disposable Mac, because that is the only legal way for us to use Apple's macOS SDK.
 
 This repository holds **build definitions and small sources of ours only**: the workflows, the pins, the
-preparation/capture scripts, and our own code that those workflows compile (`userland/`). It does not hold, and must
-never hold:
+preparation/capture scripts, and our own code that those workflows compile (`userland/`, `shaders/`, `tools/`). It does not
+hold, and must never hold:
 
 - Apple-derived material of any kind: no IPSW parts, kernelcache, kexts, prelinked collection, corecrypto, Apple SDK
   files, trust caches, Data seeds or root policies;
@@ -93,6 +93,27 @@ add-on are made on the project machine from that manifest.
 
 `workflow_dispatch` only (`component`: `all`, `audio-hal`, `camera-cmio` or `tools`), one macOS job capped at 10
 minutes, `permissions: contents: read`, no secrets, artifact `userland` kept one day.
+
+## Shader check (`shader-check.yml`)
+
+Our own Metal test shaders (`shaders/*.metal`: a rounded-rectangle distance field, a separable blur, a backdrop blend
+through framebuffer fetch, and length/distance/normalize/rsqrt) through the two compilers of the tablet's Metal path,
+on a Linux runner, with no GPU and no QEMU boot:
+
+1. the pinned metal2vulkan with the patches the plugin's bridge applies (AIR to SPIR-V; it runs `spirv-val` on every
+   module it writes);
+2. Turnip's ir3 compiler: `tools/pipeline-check` creates each pipeline on Turnip, built for Linux from the same patched
+   Mesa tree, over Mesa's no-op drm-shim as the Adreno 840 (`patches/mesa-shim-a840.patch`, for this job only).
+
+A case fails when either compiler refuses it, when its SPIR-V lacks what `shaders/cases.json` names for it, or when a
+module differs from its hash in `shaders/golden/<case>.json` (a case with no golden file is reported `unpinned`).
+
+No Apple file is read or stored. The shaders are ours; the only Apple tool is the Metal compiler, on a short macOS job
+that turns them into AIR objects (LLVM bitcode, not a metallib). That job runs only when the shaders changed: the
+objects are cached by the shaders' hash, and are never committed. The Linux job refuses a metallib in its input.
+
+`workflow_dispatch` only. With both caches warm the run is Linux only, about two minutes; a changed shader adds about
+one macOS minute; a changed pin or patch rebuilds Mesa and the translator on Linux, about twenty minutes.
 
 ## Cost
 

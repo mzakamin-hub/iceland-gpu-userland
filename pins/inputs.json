@@ -71,6 +71,13 @@
       "sha256": "9c2f9d9cab90b0ddd54db998dae6e5240fbdc26942f21461127af50af032215e"
     }
   },
+  "shader_check": {
+    "mesa_shim_patch": {
+      "path": "patches/mesa-shim-a840.patch",
+      "sha256": "1bb787733fb7cfbdb086128f6092b4e95e4c0272533a238eb8ad319168b1bf04",
+      "note": "the Linux shader-check job only: applied after verify-pins, never part of the Turnip that ships"
+    }
+  },
   "sources": {
     "absentd": {
       "path": "absent-service/absentd.c",

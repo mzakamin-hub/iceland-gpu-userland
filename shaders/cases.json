@@ -1,0 +1,24 @@
+{
+  "vertex": "ice_fullscreen_vertex",
+  "metal_flags": ["-mmacosx-version-min=27.0"],
+  "cases": [
+    {"name": "rrect_fill", "source": "rrect_sdf.metal", "fragment": "rrect_fill", "colors": ["BGRA8Unorm"],
+     "spirv_must_match": ["OpExtInst .* (Length|Sqrt|InverseSqrt)"]},
+    {"name": "rrect_stroke", "source": "rrect_sdf.metal", "fragment": "rrect_stroke", "colors": ["BGRA8Unorm"],
+     "spirv_must_match": ["OpExtInst .* (Length|Sqrt|InverseSqrt)"]},
+    {"name": "blur_pass", "source": "blur.metal", "fragment": "blur_pass", "colors": ["RGBA16Float"],
+     "spirv_must_match": ["OpImageSample"]},
+    {"name": "blur_downsample", "source": "blur.metal", "fragment": "blur_downsample", "colors": ["RGBA16Float"],
+     "spirv_must_match": ["OpImageSample"]},
+    {"name": "backdrop_tint", "source": "backdrop_fetch.metal", "fragment": "backdrop_tint", "colors": ["RGBA16Float"],
+     "fetch": true},
+    {"name": "backdrop_blend_modes", "source": "backdrop_fetch.metal", "fragment": "backdrop_blend_modes",
+     "colors": ["RGBA16Float"], "fetch": true},
+    {"name": "math_lengths", "source": "math.metal", "fragment": "math_lengths", "colors": ["RGBA16Float"],
+     "spirv_must_match": ["OpExtInst .* (InverseSqrt|Sqrt)"]},
+    {"name": "math_lengths_precise", "source": "math.metal", "fragment": "math_lengths_precise", "colors": ["RGBA16Float"],
+     "spirv_must_match": ["OpExtInst .* (InverseSqrt|Sqrt)"]},
+    {"name": "math_radial", "source": "math.metal", "fragment": "math_radial", "colors": ["BGRA8Unorm"],
+     "spirv_must_match": ["OpExtInst .* (InverseSqrt|Sqrt)"]}
+  ]
+}
