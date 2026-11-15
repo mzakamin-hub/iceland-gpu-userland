@@ -68,6 +68,8 @@ else
     echo "== applied $(basename "$shim_patch") ($expected)"
 fi
 build="$WORK/mesa-shader-check-build"
+# Mesa's configure asks the first python on PATH for mako and packaging: that must be the venv's, which has them.
+export PATH="$VENV:$PATH"
 # The options of UniXNU's build-turnip-darwin.py, with the kernel backend and the platform of a Linux host and the
 # drm-shim tool; the Darwin-only options (tu-darwin-abi-dir, the builtin pack, the build id) are that backend's.
 "$VENV/meson" setup "$build" "$MESA" --prefix="$PRODUCTS/mesa" --libdir=lib \
