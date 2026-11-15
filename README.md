@@ -117,7 +117,9 @@ one macOS minute; a changed pin or patch rebuilds Mesa and the translator on Lin
 
 ## Cost
 
-The free plan includes $12 of private Actions usage per month; macOS bills at $0.062 a minute. Every dispatch is
-preceded by an account-wide preflight over all private repositories (runs created in the last 31 days, timing API,
-per-job minutes rounded up per OS), plus the new run's worst case (its timeout times the macOS rate). A run is
-dispatched only if the total stays at or under $12.00. The ledger lives with the project, not in this repository.
+This repository is public, so its runs on GitHub's standard runners (macOS and Linux) are not billed. Every workflow is
+still `workflow_dispatch` only, one run at a time per workflow, with a cap on every job.
+
+The account's free plan includes $12 of Actions usage a month for *private* repositories (macOS at $0.062 a minute,
+Linux at $0.006). The account-wide preflight and the ledger, which live with the project and not here, concern those
+repositories; they would apply to this one again only if it were made private.
