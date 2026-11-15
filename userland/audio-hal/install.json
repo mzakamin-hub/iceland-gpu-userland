@@ -1,0 +1,11 @@
+{
+  "component": "audio-hal",
+  "products": [
+    {
+      "path": "IcelandAudio.driver",
+      "identifier": "org.iceland.audio.hal",
+      "install": "Library/Audio/Plug-Ins/HAL/IcelandAudio.driver",
+      "executables": ["Contents/MacOS/IcelandAudio"]
+    }
+  ]
+}

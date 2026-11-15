@@ -3,8 +3,9 @@
 Stage S11 of the OnePlus Pad 4 (`iceland`, SM8850) macOS port, route B (owner decision, 12 Nov): build UniXNU's macOS
 GPU userland on GitHub's disposable Mac, because that is the only legal way for us to use Apple's macOS SDK.
 
-This repository holds **this build definition only**: the workflow, the pins, and the preparation/capture scripts. It
-does not hold, and must never hold:
+This repository holds **build definitions and small sources of ours only**: the workflows, the pins, the
+preparation/capture scripts, and our own code that those workflows compile (`userland/`). It does not hold, and must
+never hold:
 
 - Apple-derived material of any kind: no IPSW parts, kernelcache, kexts, prelinked collection, corecrypto, Apple SDK
   files, trust caches, Data seeds or root policies;
@@ -70,6 +71,28 @@ caches. It is built locally, later, from the CDHashes this workflow reports.
 | `shim` | the q33e owner boot shim: `scripts/macos-boot-shims/apfs_boot_util.c` built `arm64e-apple-macos27.0` and ad-hoc signed with `--pagesize 4096 --identifier org.unixnu.apfs_boot_util`, as `build-boot-runtime.py` does. No entitlements. | 10 min |
 
 Artifacts are retained for one day and deleted as soon as they have been downloaded to the project machine.
+
+## Our own userland (`userland.yml`)
+
+Code of ours that needs Apple's macOS SDK to compile, built on the same disposable Mac and for the same reason. Sources
+are ours and use public SDK headers only; nothing is fetched, so there is nothing to cache.
+
+| Component | Folder | Product | Lands at (boot add-on path) |
+|---|---|---|---|
+| `audio-hal` | `userland/audio-hal` | `IcelandAudio.driver`, a CoreAudio AudioServerPlugIn (HAL plug-in); a skeleton with no device yet | `Library/Audio/Plug-Ins/HAL/` |
+| `camera-cmio` | `userland/camera-cmio` | `IcelandCamera.systemextension`, a CoreMediaIO camera extension provider; a skeleton with no device yet | `Library/Iceland/` (a holding place until the camera work decides how it is started) |
+| `tools` | `userland/tools` | `unixnu-absentd` (the pinned source of the `absentd` stage) and `iceland-audio-probe` (lists the audio devices coreaudiod publishes) | `bin/` |
+
+Each folder has a `build.sh` (compiles every source file of the folder for `arm64e-apple-macos27.0` into `$BUILD_DIR`)
+and an `install.json` (the products, their signing identifiers and where the add-on puts them). To add code, drop
+source files into the folder; to add a product or a tool, add it to `build.sh` and `install.json`.
+`scripts/package-userland.py` signs every Mach-O ad hoc with 4 KiB pages (no identity, no key, no certificate: the
+signature `adrenoprobed` carries), verifies it, and writes `userland-manifest.json` with each file's install path,
+mode, SHA-256 and CDHash. The owner key is never on GitHub, not even as a secret; the owner trust entry and the boot
+add-on are made on the project machine from that manifest.
+
+`workflow_dispatch` only (`component`: `all`, `audio-hal`, `camera-cmio` or `tools`), one macOS job capped at 10
+minutes, `permissions: contents: read`, no secrets, artifact `userland` kept one day.
 
 ## Cost
 

@@ -1,0 +1,11 @@
+{
+  "component": "camera-cmio",
+  "products": [
+    {
+      "path": "IcelandCamera.systemextension",
+      "identifier": "org.iceland.camera.extension",
+      "install": "Library/Iceland/IcelandCamera.systemextension",
+      "executables": ["Contents/MacOS/IcelandCamera"]
+    }
+  ]
+}

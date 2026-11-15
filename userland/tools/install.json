@@ -1,0 +1,15 @@
+{
+  "component": "tools",
+  "products": [
+    {
+      "path": "unixnu-absentd",
+      "identifier": "org.unixnu.absentd",
+      "install": "bin/unixnu-absentd"
+    },
+    {
+      "path": "iceland-audio-probe",
+      "identifier": "org.iceland.audio-probe",
+      "install": "bin/iceland-audio-probe"
+    }
+  ]
+}

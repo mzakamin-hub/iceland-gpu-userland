@@ -1,0 +1,84 @@
+name: Userland (macOS 27, arm64e)
+
+# Our own macOS userland, built where Apple's macOS SDK may be used (GitHub's disposable Mac) and nowhere else:
+#   audio-hal    userland/audio-hal    IcelandAudio.driver, a CoreAudio AudioServerPlugIn (HAL plug-in)
+#   camera-cmio  userland/camera-cmio  IcelandCamera.systemextension, a CoreMediaIO camera extension
+#   tools        userland/tools        small helper programs (unixnu-absentd, iceland-audio-probe)
+# Sources are ours and public-SDK only. Each Mach-O leaves with an ad hoc signature (4 KiB pages, no identity, no key),
+# as adrenoprobed does; the owner key is never on GitHub, not even as a secret, and the owner trust entry is made on
+# the project machine from the CDHashes in userland-manifest.json. Nothing is fetched: no dependencies, no cache.
+#
+# Cost: workflow_dispatch only, one macOS job for whatever was asked, about one to two minutes; capped at 10.
+
+on:
+  workflow_dispatch:
+    inputs:
+      component:
+        description: 'what to build'
+        type: choice
+        options: [all, audio-hal, camera-cmio, tools]
+        required: true
+        default: all
+      xcode:
+        description: 'Xcode to select: /Applications/Xcode_<version>.app (empty = newest installed)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: userland
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    name: build ${{ inputs.component }}
+    runs-on: macos-26
+    timeout-minutes: 10
+    steps:
+      - name: Check out this repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Select Xcode
+        env:
+          XCODE_VERSION: ${{ inputs.xcode }}
+        run: bash scripts/select-xcode.sh
+
+      - name: Build, sign ad hoc and pack
+        env:
+          COMPONENT: ${{ inputs.component }}
+        run: |
+          set -euo pipefail
+          case "$COMPONENT" in
+            all) components="audio-hal camera-cmio tools" ;;
+            *) components="$COMPONENT" ;;
+          esac
+          # One component failing does not hide the others: each is built, then the step fails if any did.
+          failed=""
+          for component in $components; do
+            echo "::group::$component"
+            if ! bash scripts/build-userland.sh "$component" "$GITHUB_WORKSPACE/artifacts"; then
+              failed="$failed $component"
+              echo "::error::userland/$component failed"
+            fi
+            echo "::endgroup::"
+          done
+          cd artifacts
+          python3 ../scripts/make-manifest.py --stage userland --out manifest.json $components
+          [ -z "$failed" ] || { echo "failed:$failed"; exit 1; }
+
+      - name: Upload the userland artifact
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: userland
+          path: artifacts
+          retention-days: 1
+          if-no-files-found: error
