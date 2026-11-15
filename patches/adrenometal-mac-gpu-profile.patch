@@ -1,0 +1,92 @@
+# AdrenoMetal (macOS): an optional Mac GPU profile, boot-arg agx-mac-profile=1 or NATIVE_METAL_MAC_PROFILE=1, off by default.
+# iceland's own code (MIT, as the file it patches). The facts are macos-uke's (gpu/plugin/0001-macos-windowserver.patch, eaa695a; the
+# AdrenoMetal patch there is MIT, nothing of it is copied): with Apple GPU families Core Image takes Apple-GPU paths this runtime cannot
+# serve. With the profile: supportsFamily: is YES for Common1-3 and Mac2 only; function pointers, dynamic libraries, ray tracing,
+# SIMD-group/quad-group operations, tile shaders and image blocks answer NO; minimumLinearTextureAlignmentForPixelFormat: answers at
+# least 64. iosurfaceReadOnlyTextureAlignmentBytes always answers the runtime's own linear alignment (asked directly), so the raised 64
+# never reaches it (a 64-byte IOSurface alignment sent Core Image's blur into MPS with a nil source). Without the switch every answer is
+# as before. Applies after adrenometal-universal-library-entries.patch.
+diff --git a/NativeBridgeMetalFrontend.mm b/NativeBridgeMetalFrontend.mm
+index 8edc46b..c28da51 100644
+--- a/NativeBridgeMetalFrontend.mm
++++ b/NativeBridgeMetalFrontend.mm
+@@ -4347,6 +4347,9 @@ static bool pipelineArchives(NSArray *list,std::vector<NmbBinaryArchive *> &arch
+ @protocol NBOriginalStitching
+ - (NSString *)newDagStringWithGraphs:(NSArray<MTLFunctionStitchingGraph *> *)graphs;
+ @end
++#if TARGET_OS_OSX
++static uint64_t askAnswer(SEL cmd,NSUInteger arg);   // (iceland: below, with the device queries)
++#endif
+ @interface NBDeviceMethods : NSObject
+ @end
+ static void fillBaseLimits(id device);
+@@ -4362,7 +4365,14 @@ static void fillBaseLimits(id device);
+ // SPI: the row alignment a read-only texture over an IOSurface needs. Answered unasked it was 0 (a divisor for its callers); the linear
+ // texture alignment of the widest common format is the same rule this GPU applies to any linear image.
+ - (NSUInteger)iosurfaceReadOnlyTextureAlignmentBytes {
++#if TARGET_OS_OSX
++ // iceland (macOS): the runtime's own answer, asked directly. With the Mac GPU profile the device's minimumLinearTextureAlignmentForPixelFormat:
++ // answers at least 64 (macProfile), and a 64-byte IOSurface alignment sent Core Image's blur into MPS with a nil source (macos-uke
++ // gpu/plugin/0001-macos-windowserver.patch, which keeps this answer at the runtime's for that reason). Without the profile nothing changes.
++ return (NSUInteger)askAnswer(sel_registerName("minimumLinearTextureAlignmentForPixelFormat:"),MTLPixelFormatRGBA16Float);
++#else
+  return ((NSUInteger (*)(id,SEL,NSUInteger))objc_msgSend)(self,sel_registerName("minimumLinearTextureAlignmentForPixelFormat:"),MTLPixelFormatRGBA16Float);
++#endif
+ }
+ - (uint64_t)registryID {return gRegistryID;}
+ - (NSUInteger)maxBufferLength {return nmb_device_max_buffer_length(gDevice);}
+@@ -4922,7 +4932,32 @@ static uint64_t askAnswer(SEL cmd,NSUInteger arg) {
+ static NSUInteger countArgAnswer(id,SEL cmd,NSUInteger arg) {return (NSUInteger)askAnswer(cmd,arg);}
+ static BOOL flagArgAnswer(id,SEL cmd,NSUInteger arg) {return askAnswer(cmd,arg)!=0;}
+ static BOOL (*gFamilyAnswer)(id,SEL,NSInteger);
++#if TARGET_OS_OSX
++// iceland (macOS), boot-arg agx-mac-profile=1 or NATIVE_METAL_MAC_PROFILE=1 (off by default): the device presents itself as a Mac GPU of no
++// Apple family. supportsFamily: answers YES for Common1-3 and Mac2 only (not the target families Apple1-3 the runtime adds); function
++// pointers, dynamic libraries, ray tracing, SIMD-group and quad-group operations, tile shaders and image blocks are withheld; linear
++// textures get rows aligned to at least 64 bytes. On the tablet iconservicesagent aborted in Metal's MTLReportFailure under MPSImage, called
++// from Core Image's +[CIBlurProcessor processWithInputs:arguments:output:error:] (runs w2-stack-2 and w2-zleak-1). macos-uke (Xiaomi Pad 7,
++// A732, macOS 26.5, the same runtime family) found that with Apple families Core Image takes its Apple-GPU paths and icons, the Dock and the
++// wallpaper stay blank, and answers this profile; this is our own implementation of the same answers.
++static bool macProfile() {
++ static int on=-1;
++ if(on<0) {
++  const char *env=getenv("NATIVE_METAL_MAC_PROFILE");
++  char args[1024]={};size_t size=sizeof args-1;
++  on=(env && !strcmp(env,"1")) || (sysctlbyname("kern.bootargs",args,&size,nullptr,0)==0 && strstr(args,"agx-mac-profile=1"));
++ }
++ return on!=0;
++}
++static NSUInteger macLinearAlignment(id,SEL cmd,NSUInteger format) {
++ const NSUInteger own=(NSUInteger)askAnswer(cmd,format);
++ return own<64?64:own;
++}
++#endif
+ static BOOL familyForCaller(id self,SEL _cmd,NSInteger family) {
++#if TARGET_OS_OSX
++ if(macProfile())return family==MTLGPUFamilyCommon1 || family==MTLGPUFamilyCommon2 || family==MTLGPUFamilyCommon3 || family==MTLGPUFamilyMac2;
++#endif
+  if(family>=1003 && family<2000) {   // MTLGPUFamilyApple3 and up
+   Dl_info caller;
+   if(dladdr(__builtin_return_address(0),&caller) && caller.dli_fname && strstr(caller.dli_fname,"/RenderBox.framework/"))return NO;
+@@ -5009,6 +5044,21 @@ static void installAnswers(Class cls) {
+   gFamilyAnswer=(BOOL (*)(id,SEL,NSInteger))method_getImplementation(family);
+   method_setImplementation(family,(IMP)familyForCaller);
+  }
++#if TARGET_OS_OSX
++ // iceland (macOS): the Mac GPU profile's withheld features and its linear alignment (macProfile).
++ if(macProfile()) {
++  for(const char *name:{"supportsFunctionPointers","supportsFunctionPointersFromRender","supportsDynamicLibraries","supportsRenderDynamicLibraries",
++                         "supportsRaytracing","supportsRaytracingFromRender","supportsPrimitiveMotionBlur","supportsSIMDGroup","supportsSIMDReduction",
++                         "supportsSIMDShuffleAndFill","supportsSIMDGroupMatrix","supportsQuadGroup","supportsTileShaders","supportsImageBlocks"}) {
++   SEL sel=sel_registerName(name);
++   gAnswers[sel]=0;
++   if(!class_addMethod(cls,sel,(IMP)flagAnswer,"B16@0:8"))class_replaceMethod(cls,sel,(IMP)flagAnswer,"B16@0:8");
++  }
++  SEL linear=sel_registerName("minimumLinearTextureAlignmentForPixelFormat:");
++  if(!class_addMethod(cls,linear,(IMP)macLinearAlignment,"Q24@0:8Q16"))class_replaceMethod(cls,linear,(IMP)macLinearAlignment,"Q24@0:8Q16");
++  GLOG(@"native-metal: Mac GPU profile (agx-mac-profile=1): Common1-3 and Mac2, no Apple family, linear rows of 64 bytes or more");
++ }
++#endif
+ }
+ 
+ // With metal-flow= set (NATIVE_METAL_FLOW), the warm pass and work placement counts go to os_log every ten seconds when they changed.
