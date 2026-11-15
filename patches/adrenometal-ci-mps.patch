@@ -1,0 +1,23 @@
+# AdrenoMetal (macOS): boot-arg ci-mps=0 sets CI_ENABLE_MPS=0 in every process that loads the plugin, so Core Image blurs with its
+# own kernels instead of MPS. iconservicesagent aborted on every start in MTLReportFailure under MPSImage, called from Core Image's
+# CIBlurProcessor (a nil source); the blank Dock and icons followed. The fact is upstream's (UniXNU/AdrenoMetal 19d6bcf, branch
+# fix/runtime-development-d923, MIT): Core Image reads CI_ENABLE_MPS at its first blur, after the plugin has loaded. Our own hunk at
+# the pin 73d582f, macOS only, off without the boot-arg; setenv without overwrite, so a value already set wins. It touches no file
+# the other AdrenoMetal patches touch.
+diff --git a/NativeAdrenoMetalPlugin.mm b/NativeAdrenoMetalPlugin.mm
+index ffa797d..6d9bc30 100644
+--- a/NativeAdrenoMetalPlugin.mm
++++ b/NativeAdrenoMetalPlugin.mm
+@@ -389,6 +389,12 @@ static id deviceForPort(unsigned port) {
+         // log-gpu=1: the GPU stack's log lines (NSLog, the pipeline journal); off without it.
+         if (bootArgSet("log-gpu=1")) setenv("SHENG_LOG_GPU", "1", 1);
+         else unsetenv("SHENG_LOG_GPU");
++#if TARGET_OS_OSX
++        // iceland (macOS): boot-arg ci-mps=0 sets CI_ENABLE_MPS=0, so Core Image blurs with its own kernels instead of MPS; through MPS
++        // iconservicesagent aborted on every start (MPSImage under CIBlurProcessor, a nil source). Core Image reads the variable at its
++        // first blur, after this plugin has loaded; a value already in the environment is kept.
++        if (bootArgSet("ci-mps=0")) setenv("CI_ENABLE_MPS", "0", 0);
++#endif
+ #if TARGET_OS_OSX
+         // macOS: Turnip opens the accelerator by class (AGXAccelerator here); the display takes plain rows (no Apple framebuffer or IOSurface
+         // compression). The runtime keeps its default block size: the virtual-machine board shrank it for a 512 MiB GPU pool, which this
