@@ -45,7 +45,7 @@
     "mac_gpu_profile": {
       "path": "patches/adrenometal-mac-gpu-profile.patch",
       "applies_to": "drivers/AdrenoMetal",
-      "sha256": "8622395cede52257eb5b49219708eb07e8a68f594ec274dc63de2d329e9c889e"
+      "sha256": "a5ee3fafec116512acfe619a99c5c1f423d7c17d7fd57395b326b20848ca9b02"
     },
     "ci_mps": {
       "path": "patches/adrenometal-ci-mps.patch",

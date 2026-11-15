@@ -3,12 +3,17 @@
 # SnapMetal (8fe64cb, AdrenoMetal/AdrenoMTLDevice.m; MIT); nothing of either is copied. With Apple GPU families Core Image takes
 # Apple-GPU paths this runtime cannot serve. With the profile: supportsFamily: is YES for Common1-3 and Mac2 only and featureProfile
 # answers 10001 (Mac2 + Common1-3); function pointers, dynamic libraries, ray tracing, SIMD-group/quad-group operations, tile shaders,
-# image blocks, framebuffer fetch and memoryless targets answer NO, and Core Animation's CA_DISABLE_GENERIC_SHADERS is set (its generic
-# pipeline needs fetch); minimumLinearTextureAlignmentForPixelFormat: answers at least 64; iosurfaceReadOnlyTextureAlignmentBytes,
-# iosurfaceTextureAlignmentBytes and deviceLinearReadOnlyTextureAlignmentBytes answer 16 (64 there sent Core Image's blur into MPS with
-# a nil source). Without the switch every answer is as before. Applies after adrenometal-universal-library-entries.patch.
+# image blocks and memoryless targets answer NO; minimumLinearTextureAlignmentForPixelFormat: answers at least 64;
+# iosurfaceReadOnlyTextureAlignmentBytes, iosurfaceTextureAlignmentBytes and deviceLinearReadOnlyTextureAlignmentBytes answer 16 (64
+# there sent Core Image's blur into MPS with a nil source). Framebuffer fetch stays the runtime's own answer (yes on Turnip, through
+# rasterization-order attachment access), as SnapMetal answers with this profile: with NO (this patch until 4f819e8) the tablet's first
+# full-GPU desktop (run w3-combined-1-datareset, 15 Nov) drew round shapes as diamonds, no login clock and a dark, opaque menu bar,
+# because Core Animation's corner restore, blur, backdrop and blended materials read the destination and without fetch still take
+# that path. Boot-arg agx-mac-fetch=0 (NATIVE_METAL_MAC_FETCH=0) answers NO again and sets Core Animation's
+# CA_DISABLE_GENERIC_SHADERS (its generic pipeline needs fetch), the earlier behaviour, to compare. Without agx-mac-profile=1 every
+# answer is as before. Applies after adrenometal-universal-library-entries.patch.
 diff --git a/NativeBridgeMetalFrontend.mm b/NativeBridgeMetalFrontend.mm
-index 8edc46b..7c2cbdd 100644
+index 8edc46b..2cdae93 100644
 --- a/NativeBridgeMetalFrontend.mm
 +++ b/NativeBridgeMetalFrontend.mm
 @@ -4347,6 +4347,10 @@ static bool pipelineArchives(NSArray *list,std::vector<NmbBinaryArchive *> &arch
@@ -41,7 +46,7 @@ index 8edc46b..7c2cbdd 100644
  }
  - (uint64_t)registryID {return gRegistryID;}
  - (NSUInteger)maxBufferLength {return nmb_device_max_buffer_length(gDevice);}
-@@ -4922,7 +4937,61 @@ static uint64_t askAnswer(SEL cmd,NSUInteger arg) {
+@@ -4922,7 +4937,78 @@ static uint64_t askAnswer(SEL cmd,NSUInteger arg) {
  static NSUInteger countArgAnswer(id,SEL cmd,NSUInteger arg) {return (NSUInteger)askAnswer(cmd,arg);}
  static BOOL flagArgAnswer(id,SEL cmd,NSUInteger arg) {return askAnswer(cmd,arg)!=0;}
  static BOOL (*gFamilyAnswer)(id,SEL,NSInteger);
@@ -74,8 +79,25 @@ index 8edc46b..7c2cbdd 100644
 +static uint64_t macFeatureProfile(id,SEL) {return 10001;}
 +static NSUInteger macSurfaceAlignment(id,SEL) {return 16;}
 +static BOOL macNo(id,SEL) {return NO;}
-+// Core Animation's generic pipeline blends in the shader through framebuffer fetch, which the profile does not offer: it draws with it
-+// while a specialised pipeline compiles, and without fetch its blur, backdrop and rounded corners come out black (SnapMetal). Its debug
++// Framebuffer fetch stays the runtime's own answer under the profile (yes on Turnip: it reads a color attachment in rasterization order).
++// The profile first answered NO, and the tablet's first desktop drawn wholly on the GPU (run w3-combined-1-datareset, 15 Nov) had every
++// round shape cut to a diamond (the login picture, the password field's ends), no login clock and a dark, opaque menu bar: Core Animation
++// restores the backdrop outside a clipping layer's rounded corners by reading the destination, and on a device without fetch it still
++// takes that path and writes the corner triangles; its blur, backdrop and blended materials read the destination the same way (SnapMetal
++// AdrenoMTLDevice.m, which answers YES with this same profile for that reason). Boot-arg agx-mac-fetch=0 or NATIVE_METAL_MAC_FETCH=0
++// answers NO again, with CA_DISABLE_GENERIC_SHADERS, to compare.
++static bool macFetch() {
++ static int on=-1;
++ if(on<0) {
++  const char *env=getenv("NATIVE_METAL_MAC_FETCH");
++  char args[1024]={};size_t size=sizeof args-1;
++  on=!((env && !strcmp(env,"0")) || (sysctlbyname("kern.bootargs",args,&size,nullptr,0)==0 && strstr(args,"agx-mac-fetch=0")));
++ }
++ return on!=0;
++}
++// Only where the device answers no framebuffer fetch (macFetch off, or a runtime without an ordered read). Core Animation's generic
++// pipeline blends in the shader through framebuffer fetch: it draws with it while a specialised pipeline compiles, and without fetch its
++// blur, backdrop and rounded corners come out black (SnapMetal). Its debug
 +// option CA_DISABLE_GENERIC_SHADERS makes it wait for the specialised pipeline. Set in the environment (read at QuartzCore's first use)
 +// and, where QuartzCore is loaded already, as the live option through its exported CAGetDebugOptionEnvVariableName / CASetDebugOption.
 +// An explicit CA_DISABLE_GENERIC_SHADERS or CA_FORCE_GENERIC_SHADERS is left as it is.
@@ -103,7 +125,7 @@ index 8edc46b..7c2cbdd 100644
   if(family>=1003 && family<2000) {   // MTLGPUFamilyApple3 and up
    Dl_info caller;
    if(dladdr(__builtin_return_address(0),&caller) && caller.dli_fname && strstr(caller.dli_fname,"/RenderBox.framework/"))return NO;
-@@ -5009,6 +5078,35 @@ static void installAnswers(Class cls) {
+@@ -5009,6 +5095,43 @@ static void installAnswers(Class cls) {
    gFamilyAnswer=(BOOL (*)(id,SEL,NSInteger))method_getImplementation(family);
    method_setImplementation(family,(IMP)familyForCaller);
   }
@@ -124,16 +146,24 @@ index 8edc46b..7c2cbdd 100644
 +   {"featureProfile",(IMP)macFeatureProfile,"Q16@0:8"},
 +   {"iosurfaceTextureAlignmentBytes",(IMP)macSurfaceAlignment,"Q16@0:8"},
 +   {"deviceLinearReadOnlyTextureAlignmentBytes",(IMP)macSurfaceAlignment,"Q16@0:8"},
-+   {"isFramebufferReadSupported",(IMP)macNo,"B16@0:8"},
 +   {"supportsMemorylessRenderTargets",(IMP)macNo,"B16@0:8"},
 +  };
 +  for(const auto &f:fixed) {
 +   SEL sel=sel_registerName(f.name);
 +   if(!class_addMethod(cls,sel,f.imp,f.types))class_replaceMethod(cls,sel,f.imp,f.types);
 +  }
-+  macDisableGenericShaders();
++  // Framebuffer fetch: the runtime's answer, installed by the loop above, stays (macFetch). Without one, or with agx-mac-fetch=0, the
++  // answer is NO and Core Animation waits for its specialised pipelines.
++  const SEL fetch=sel_registerName("isFramebufferReadSupported");
++  const auto own=gAnswers.find(fetch);
++  const bool fetches=macFetch() && own!=gAnswers.end() && own->second!=0;
++  if(!fetches) {
++   if(!class_addMethod(cls,fetch,(IMP)macNo,"B16@0:8"))class_replaceMethod(cls,fetch,(IMP)macNo,"B16@0:8");
++   macDisableGenericShaders();
++  }
 +  GLOG(@"native-metal: Mac GPU profile (agx-mac-profile=1): Common1-3 and Mac2 (featureProfile 10001), no Apple family, linear rows of 64 "
-+      "bytes or more, IOSurface and read-only linear alignment 16, no framebuffer fetch (CA_DISABLE_GENERIC_SHADERS)");
++      "bytes or more, IOSurface and read-only linear alignment 16, no memoryless targets, framebuffer fetch %s",
++      fetches?"as the runtime answers (yes)":"NO (CA_DISABLE_GENERIC_SHADERS)");
 + }
 +#endif
  }
