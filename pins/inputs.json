@@ -31,6 +31,11 @@
       "path": "patches/adrenometal-turnip-smoke-macos-service.patch",
       "applies_to": "drivers/AdrenoMetal",
       "sha256": "f43e50e39621b316245f089de042f5179b3326b3cf630e82400f83ae39a67034"
+    },
+    "function_lookup_errors": {
+      "path": "patches/adrenometal-function-lookup-errors.patch",
+      "applies_to": "drivers/AdrenoMetal",
+      "sha256": "e392601a4bf41b953b76a2ba5e126b5acb78408f53f3d12777e52f28cd0dccd4"
     }
   },
   "mesa_patches": {
