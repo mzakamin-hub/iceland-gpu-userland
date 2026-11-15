@@ -36,6 +36,11 @@
       "path": "patches/adrenometal-function-lookup-errors.patch",
       "applies_to": "drivers/AdrenoMetal",
       "sha256": "e392601a4bf41b953b76a2ba5e126b5acb78408f53f3d12777e52f28cd0dccd4"
+    },
+    "universal_library_entries": {
+      "path": "patches/adrenometal-universal-library-entries.patch",
+      "applies_to": "drivers/AdrenoMetal",
+      "sha256": "b464870341f2dd9fe3cf2ca03163ece093f700e15f86edbd0bda3be211e306f3"
     }
   },
   "mesa_patches": {

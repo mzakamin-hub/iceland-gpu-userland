@@ -22,6 +22,7 @@ MIT upstream file under that file's licence. Each file's header says why it exis
 | `adrenoprobed-macos-gate.patch` | AdrenoMetal | the probe daemon matched only iPadOS' `IOAcceleratorES`; on macOS it matches `AGXAccelerator` |
 | `adrenometal-turnip-smoke-macos-service.patch` | AdrenoMetal | the daemon's Turnip phase defaulted `TU_DARWIN_SERVICE` to `IOAcceleratorES`; macOS: `AGXAccelerator` |
 | `adrenometal-function-lookup-errors.patch` | AdrenoMetal | upstream 6d4a3f3 (MIT, unmerged in main): a function missing from a library answers `MTLLibraryErrorFunctionNotFound`, so Core Image tries its next library instead of failing (`_lanczosDownV`/`H`) |
+| `adrenometal-universal-library-entries.patch` | AdrenoMetal | the .mm parts of upstream 99da261 + 0e018dc (MIT), re-based: a universal metallib's entries are read from its AIR64 slice, so the not-found answer also reaches universal libraries |
 | `mesa-iceland-1-bo-finish-order.patch` | Mesa, after UniXNU's record | a freed BO's slot is zeroed inside the retire lock, before its handle can be handed out again |
 | `mesa-iceland-2-ir3-round-default.patch` | Mesa, after UniXNU's record | `cov` rounds to nearest even when no rounding mode is declared (it truncated) |
 | `mesa-iceland-4-macos-service.patch` | Mesa, after UniXNU's record | Turnip's own default service on macOS is `AGXAccelerator` |
