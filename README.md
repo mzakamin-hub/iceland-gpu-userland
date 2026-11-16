@@ -82,6 +82,7 @@ are ours and use public SDK headers only; nothing is fetched, so there is nothin
 | `audio-hal` | `userland/audio-hal` | `IcelandAudio.driver`, a CoreAudio AudioServerPlugIn (HAL plug-in); a skeleton with no device yet | `Library/Audio/Plug-Ins/HAL/` |
 | `camera-cmio` | `userland/camera-cmio` | `IcelandCamera.systemextension`, a CoreMediaIO camera extension provider; a skeleton with no device yet | `Library/Iceland/` (a holding place until the camera work decides how it is started) |
 | `tools` | `userland/tools` | `unixnu-absentd` (the pinned source of the `absentd` stage) and `iceland-audio-probe` (lists the audio devices coreaudiod publishes) | `bin/` |
+| `bluetooth` | `userland/bluetooth` | `BlueTool`, the `com.apple.BlueTool` XPC service macOS's bluetoothd asks to start the controller; UniXNU/QcaBluetooth's `userland/BlueTool.c` (main effe4ec5, BSD-2-Clause-Patent) copied byte for byte, its licence beside it | `sbin/` (shown over `/usr/sbin`) |
 
 Each folder has a `build.sh` (compiles every source file of the folder for `arm64e-apple-macos27.0` into `$BUILD_DIR`)
 and an `install.json` (the products, their signing identifiers and where the add-on puts them). To add code, drop

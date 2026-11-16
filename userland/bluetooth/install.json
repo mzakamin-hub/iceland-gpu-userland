@@ -1,0 +1,11 @@
+{
+  "component": "bluetooth",
+  "products": [
+    {
+      "path": "BlueTool",
+      "identifier": "org.unixnu.bluetooth.BlueTool",
+      "install": "sbin/BlueTool",
+      "entitlements": "BlueTool.entitlements.plist"
+    }
+  ]
+}
