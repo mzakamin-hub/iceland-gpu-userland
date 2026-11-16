@@ -384,6 +384,10 @@ static void dump_tree(const struct ax_tree *tree, const char *name, int max_line
         return;
     say("ax %s: %d nodes, %d window(s)%s", name, tree->count, tree->windows, tree->full ? ", the node limit cut it" : "");
     for (i = 0; i < tree->count && shown < max_lines; i++) {
+        // System Settings' sidebar (its panes' identifiers) says nothing about the page: left out.
+        if (strncmp(tree->nodes[i].identifier, "com.apple.settings.", 19) == 0 ||
+            strncmp(tree->nodes[i].identifier, "com.apple.systempreferences.", 28) == 0)
+            continue;
         if (!node_has_text(&tree->nodes[i]))
             continue;
         print_node(&tree->nodes[i], name);
@@ -475,14 +479,81 @@ static int find_switch(const struct ax_tree *tree, int row)
     int end = subtree_end(tree, row);
     int i;
 
+    int box = -1;
+
+    // A real switch first (subrole AXSwitch); a plain check box only when there is none. A "Show in Finder" toggle
+    // (AXCheckBox/AXToggle beside each Login Items entry) is never the setting.
     for (i = row; i < end; i++) {
         const struct ax_node *node = &tree->nodes[i];
 
-        if (same_text(node->role, "AXCheckBox") || same_text(node->subrole, "AXSwitch") ||
-            same_text(node->subrole, "AXToggle"))
+        if (has_text(node->desc, "Show in Finder") || has_text(node->title, "Show in Finder"))
+            continue;
+        if (same_text(node->subrole, "AXSwitch"))
+            return i;
+        if (box < 0 && same_text(node->role, "AXCheckBox") && !same_text(node->subrole, "AXToggle"))
+            box = i;
+    }
+    return box;
+}
+
+// The context of a node for the log: the subtree of its ancestor `up` levels up, every node (also those without text),
+// at most max_lines lines.
+static void dump_context(const struct ax_tree *tree, int index, int up, const char *name, int max_lines)
+{
+    int root = index;
+    int end;
+    int shown = 0;
+    int i;
+
+    while (up-- > 0 && tree->nodes[root].parent >= 0)
+        root = tree->nodes[root].parent;
+    end = subtree_end(tree, root);
+    say("ax %s: context of node %d (%s), from node %d", name, index, tree->nodes[index].role, root);
+    for (i = root; i < end && shown < max_lines; i++, shown++)
+        print_node(&tree->nodes[i], name);
+}
+
+// The first sheet or popover in the tree (the (i) button's details come up as one), or -1.
+static int find_sheet(const struct ax_tree *tree)
+{
+    int i;
+
+    for (i = 0; i < tree->count; i++) {
+        if (same_text(tree->nodes[i].role, "AXSheet") || same_text(tree->nodes[i].role, "AXPopover"))
             return i;
     }
     return -1;
+}
+
+// In a sheet: the switch of a row that names `needle`, else the sheet's only real switch; -1 when neither.
+static int sheet_switch(const struct ax_tree *tree, int sheet, const char *needle)
+{
+    int end = subtree_end(tree, sheet);
+    int only = -1;
+    int switches = 0;
+    int i;
+
+    for (i = sheet; i < end; i++) {
+        if (same_text(tree->nodes[i].subrole, "AXSwitch") ||
+            (same_text(tree->nodes[i].role, "AXCheckBox") && !same_text(tree->nodes[i].subrole, "AXToggle"))) {
+            switches++;
+            only = i;
+        }
+    }
+    for (i = sheet; i < end; i++) {
+        int up = tree->nodes[i].parent;
+        int level;
+
+        if (!node_has(&tree->nodes[i], needle))
+            continue;
+        for (level = 0; up >= sheet && level < 6; level++, up = tree->nodes[up].parent) {
+            int sw = find_switch(tree, up);
+
+            if (sw >= 0)
+                return sw;
+        }
+    }
+    return switches == 1 ? only : -1;
 }
 
 // What "on" reads as. Anything else (0, false, nothing at all) is treated as off: the switch is pressed, and the line
@@ -576,10 +647,36 @@ static void press_element(AXUIElementRef element, const char *what)
 static int enable_round(struct ax_tree *tree, const char *needle, char *label, size_t label_size,
                         char pressed[][kFieldSize], int pressed_count)
 {
+    static int context_said;
+    static int sheet_said;
     int matched = 0;
     int info = -1;
+    int sheet = find_sheet(tree);
     int i;
 
+    // A sheet up (after the (i) button): what is in it, once, and its switch.
+    if (sheet >= 0) {
+        int sw = sheet_switch(tree, sheet, needle);
+
+        if (!sheet_said) {
+            sheet_said = 1;
+            dump_context(tree, sheet, 0, "System Settings sheet", 80);
+        }
+        if (sw >= 0) {
+            snprintf(label, label_size, "%s", "the sheet");
+            if (value_is_on(tree->nodes[sw].value))
+                return 2;
+            press_element(tree->nodes[sw].element, "the sheet's switch");
+            say("pressed the switch in the sheet (%s %s)", field(tree->nodes[sw].desc), field(tree->nodes[sw].identifier));
+            return 1;
+        }
+    }
+    for (i = 0; i < tree->count; i++) {
+        if (!context_said && node_has(&tree->nodes[i], needle)) {
+            context_said = 1;
+            dump_context(tree, i, 4, "System Settings", 70);
+        }
+    }
     for (i = 0; i < tree->count; i++) {
         int row;
         int sw;
@@ -633,7 +730,8 @@ static int enable_round(struct ax_tree *tree, const char *needle, char *label, s
         }
         if (!already) {
             press_element(tree->nodes[info].element, "the info button");
-            say("pressed the info button of %s", label);
+            say("pressed the info button of %s (%s t=%s d=%s id=%s)", label, tree->nodes[info].role,
+                field(tree->nodes[info].title), field(tree->nodes[info].desc), field(tree->nodes[info].identifier));
             return 3;
         }
     }
@@ -736,7 +834,7 @@ static int cmd_enable_extension(const char *needle, long seconds)
         elapsed += 2;
     }
     say("%s not found / not switched in %ld s", needle, seconds);
-    dump_app("System Settings", 120);
+    dump_app("System Settings", 300);
     return 1;
 }
 
