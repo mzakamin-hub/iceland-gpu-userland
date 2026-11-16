@@ -99,9 +99,15 @@ static void iceland_host_finish(int status)
 
 @end
 
-int main(void)
+int main(int argc, char **argv)
 {
     @autoreleasepool {
+        // The wait for the final callback, in seconds: 120, or the first argument (a run in which a person approves the
+        // extension in System Settings needs minutes).
+        long patience = argc > 1 ? strtol(argv[1], NULL, 10) : 120;
+
+        if (patience < 10 || patience > 7200)
+            patience = 120;
         // The main queue is a serial queue, and the run loop below drains it: the callbacks arrive on this thread.
         dispatch_queue_t queue = dispatch_get_main_queue();
         OSSystemExtensionRequest *request = [OSSystemExtensionRequest activationRequestForExtension:kIcelandCameraExtension
@@ -118,9 +124,9 @@ int main(void)
         [OSSystemExtensionManager.sharedManager submitRequest:request];
 
         // The run loop's own timeout: a request the system never answers must not hold a boot or a CI job.
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)120 * NSEC_PER_SEC), queue, ^{
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)patience * NSEC_PER_SEC), queue, ^{
             if (!iceland_host_finished) {
-                iceland_host_log("no final callback within 120 s");
+                iceland_host_log("no final callback within %ld s", patience);
                 iceland_camera_note(ICELAND_CAMERA_NOTE_HOST, 3, 0);
                 iceland_host_finish(1);
             }

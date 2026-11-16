@@ -76,6 +76,7 @@ static void run_frames(iceland_camera_kernel *kernel, long wanted, long session)
     volatile uint64_t touched = 0;
     int attempt;
     int started;
+    int why = 0;                       // how the loop ended: 0 all frames, 1 attempts used up, 2 + the wait's answer, 9 a bad index
 
     if (iceland_camera_kernel_get_info(kernel, &info) != 0 ||
         iceland_camera_kernel_map(kernel, info.bytes_per_buffer, info.buffer_count) != 0) {
@@ -102,11 +103,13 @@ static void run_frames(iceland_camera_kernel *kernel, long wanted, long session)
             continue;
         if (waited != ICELAND_CAMERA_KERNEL_FRAME) {
             say("session %ld: wait stopped (%d)", session, waited);
+            why = 2 + waited;
             break;
         }
         raw = iceland_camera_kernel_buffer(kernel, frame.index);
         if (!raw) {
             say("session %ld: frame index %llu outside the mapping", session, (unsigned long long)frame.index);
+            why = 9;
             break;
         }
         // The whole frame is read, as a converter would: the sum is of the middle line.
@@ -130,7 +133,12 @@ static void run_frames(iceland_camera_kernel *kernel, long wanted, long session)
                 (unsigned long long)(frame.stride ? (sum * 100 / frame.stride) % 100 : 0));
         }
     }
-    say("session %ld: %ld of %ld frames, %ld torn", session, served, wanted, torn);
+    if (why == 0 && served < wanted)
+        why = 1;
+    say("session %ld: %ld of %ld frames, %ld torn; the loop ended %d after %d waits", session, served, wanted, torn, why, attempt);
+    // The same in the kernel log, which is all a tablet run keeps.
+    iceland_camera_note(ICELAND_CAMERA_NOTE_PROBE_SESSION, (uint64_t)served, (uint64_t)torn);
+    iceland_camera_note(ICELAND_CAMERA_NOTE_PROBE_SESSION_END, (uint64_t)why, (uint64_t)attempt);
     iceland_camera_kernel_stop(kernel);
     iceland_camera_kernel_unmap(kernel);
     print_info(kernel, "after stop");

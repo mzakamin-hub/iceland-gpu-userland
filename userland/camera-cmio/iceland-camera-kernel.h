@@ -46,6 +46,8 @@ enum {
     ICELAND_CAMERA_NOTE_HOST = 6,           // "host activation": a = 0 asked, 1 needs approval, 2 finished, 3 failed; b = code
     ICELAND_CAMERA_NOTE_PROBE = 7,          // "probe": a = CoreMediaIO devices listed, b = 1 when ours is among them
     ICELAND_CAMERA_NOTE_PROBE_FRAMES = 8,   // "probe frames": a = frames a CoreMediaIO client received, b = a status
+    ICELAND_CAMERA_NOTE_PROBE_SESSION = 9,  // "probe session": a = frames taken straight from the service, b = torn
+    ICELAND_CAMERA_NOTE_PROBE_SESSION_END = 10, // "probe session end": a = why its loop ended, b = waits made
 };
 
 // The eight scalars selector 3 answers with.
