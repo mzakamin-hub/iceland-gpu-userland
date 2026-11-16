@@ -61,7 +61,7 @@ void iceland_camera_kernel_stop(iceland_camera_kernel *kernel)
     IOConnectCallScalarMethod(kernel->connection, ICELAND_CAMERA_KERNEL_SELECTOR_STOP, NULL, 0, &output, &output_count);
 }
 
-int iceland_camera_kernel_info(iceland_camera_kernel *kernel, iceland_camera_kernel_info *info)
+int iceland_camera_kernel_get_info(iceland_camera_kernel *kernel, iceland_camera_kernel_info *info)
 {
     uint64_t output[8] = {0};
     uint32_t output_count = 8;
@@ -149,7 +149,7 @@ int iceland_camera_kernel_torn(iceland_camera_kernel *kernel, const iceland_came
 {
     iceland_camera_kernel_info info;
 
-    if (iceland_camera_kernel_info(kernel, &info) != 0)
+    if (iceland_camera_kernel_get_info(kernel, &info) != 0)
         return 1;
     return info.frames >= frame->sequence + 2;
 }

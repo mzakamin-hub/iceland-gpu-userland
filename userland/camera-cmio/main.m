@@ -133,10 +133,8 @@ int main(void)
             iceland_camera_log("start: the device or its stream could not be made");
             return 1;
         }
-        if (![CMIOExtensionProvider startServiceWithProvider:source.provider]) {
-            iceland_camera_log("start: startServiceWithProvider failed");
-            return 1;
-        }
+        // Returns nothing: the service is the provider's mach service, and its clients arrive on the run loop below.
+        [CMIOExtensionProvider startServiceWithProvider:source.provider];
         CFRunLoopRun();
     }
     return 0;

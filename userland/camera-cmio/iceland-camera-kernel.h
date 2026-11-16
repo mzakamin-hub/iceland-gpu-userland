@@ -97,7 +97,7 @@ void iceland_camera_kernel_close(iceland_camera_kernel *kernel);
 
 int iceland_camera_kernel_start(iceland_camera_kernel *kernel);      // 0 = streaming
 void iceland_camera_kernel_stop(iceland_camera_kernel *kernel);
-int iceland_camera_kernel_info(iceland_camera_kernel *kernel, iceland_camera_kernel_info *info);
+int iceland_camera_kernel_get_info(iceland_camera_kernel *kernel, iceland_camera_kernel_info *info);
 
 // Map memory type 0 read-only: `buffer_count` buffers of `bytes_per_buffer` back to back. 0 on success.
 int iceland_camera_kernel_map(iceland_camera_kernel *kernel, uint64_t bytes_per_buffer, uint64_t buffer_count);

@@ -58,7 +58,7 @@ static void print_info(iceland_camera_kernel *kernel, const char *when)
 {
     iceland_camera_kernel_info info;
 
-    if (iceland_camera_kernel_info(kernel, &info) != 0) {
+    if (iceland_camera_kernel_get_info(kernel, &info) != 0) {
         say("IcelandCamera info failed (%s)", when);
         return;
     }
@@ -77,7 +77,7 @@ static void run_frames(iceland_camera_kernel *kernel, long wanted, long session)
     int attempt;
     int started;
 
-    if (iceland_camera_kernel_info(kernel, &info) != 0 ||
+    if (iceland_camera_kernel_get_info(kernel, &info) != 0 ||
         iceland_camera_kernel_map(kernel, info.bytes_per_buffer, info.buffer_count) != 0) {
         say("session %ld: the frame buffers are not mapped", session);
         return;

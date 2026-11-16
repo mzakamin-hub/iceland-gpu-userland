@@ -234,7 +234,7 @@ static NSError *iceland_camera_stream_error(NSInteger code, NSString *descriptio
             BOOL mapped = NO;
             BOOL running = NO;
 
-            if (iceland_camera_kernel_info(&_kernel, &info) == 0 && info.bytes_per_buffer > 0 && info.buffer_count > 0 &&
+            if (iceland_camera_kernel_get_info(&_kernel, &info) == 0 && info.bytes_per_buffer > 0 && info.buffer_count > 0 &&
                 iceland_camera_kernel_map(&_kernel, info.bytes_per_buffer, info.buffer_count) == 0) {
                 mapped = YES;
                 if (iceland_camera_kernel_start(&_kernel) == 0)
