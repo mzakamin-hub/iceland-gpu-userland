@@ -1,0 +1,21 @@
+# AdrenoMetal (macOS): boot-arg gpu-prime=0 starts no shader priming thread in the render server. iceland's own hunk (MIT, as the
+# file it patches); the fact is upstream's (UniXNU/AdrenoMetal c890147 "diag(metal): pause shader priming for paired desktop
+# captures", branch diag/desktop-comparison, which has the same test without the macOS gate). A diagnostic for comparing the
+# desktop's pacing with and without the priming thread's CPU load; off without the boot-arg. Applies after
+# adrenometal-half-each-operation.patch (both touch NativeAdrenoMetalPlugin.mm, at different places).
+diff --git a/NativeAdrenoMetalPlugin.mm b/NativeAdrenoMetalPlugin.mm
+index b6500c4..e402aec 100644
+--- a/NativeAdrenoMetalPlugin.mm
++++ b/NativeAdrenoMetalPlugin.mm
+@@ -626,6 +626,11 @@ static id deviceForPort(unsigned port) {
+         // The translator recurses deeply on large functions: give it the stack of a main thread.
+         pthread_attr_setstacksize(&attributes, 8u << 20);
+         pthread_t primer;
++#if TARGET_OS_OSX
++        // iceland (macOS): gpu-prime=0 starts no priming thread, a diagnostic for comparing the desktop's pacing with and without its
++        // CPU load (upstream c890147). Shaders are then translated at their first use only.
++        if (!bootArgSet("gpu-prime=0"))
++#endif
+         pthread_create(&primer, &attributes, [](void *) -> void * {
+                 pthread_setname_np("native-metal-prime");   // a process sample and the telemetry's TH rows name its CPU time
+                 char list[1024];

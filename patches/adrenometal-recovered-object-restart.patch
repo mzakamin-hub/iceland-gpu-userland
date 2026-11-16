@@ -1,0 +1,20 @@
+# AdrenoMetal: the render server ends itself when a command buffer is refused with MadeBeforeRecovery. The second hunk of upstream
+# adddc7b "fix(metal): restart render server after recovered-object refusal" (UniXNU/AdrenoMetal, branch fix/runtime-development-d923,
+# adapted there from zus12873 2b9a743; MIT), unchanged; its first hunk only rewords a log line with a macro our pin 73d582f does not
+# have. The runtime at our translator pin produces the refusal: Error::NotImplemented(RuntimeGap::MadeBeforeRecovery), metal2vulkan
+# 555b13d5 crates/metal2vulkan-runtime/src/device/line.rs:720 and :734, event.rs:327, for an object made before the runtime recovered
+# its Vulkan device; its text reaches -[NBCommandBuffer refuse:] through lastError(). endRenderServerAfterGpuLoss is the pin's own
+# (it acts in the render server only, once, by SIGTERM after 500 ms; a lost device already takes it). Unconditional, as upstream.
+diff --git a/NativeBridgeMetalFrontend.mm b/NativeBridgeMetalFrontend.mm
+index 2cdae93..e5a48f0 100644
+--- a/NativeBridgeMetalFrontend.mm
++++ b/NativeBridgeMetalFrontend.mm
+@@ -3194,6 +3194,8 @@ static char kUserDictionaryKey;
+ - (void)setProtectionOptions:(uint64_t)options {if(options)[self refuse:[NSString stringWithFormat:@"protection options 0x%llx",options]];}
+ - (void)refuse:(NSString *)what {
+  if(!self.encodeFailure){self.encodeFailure=what;NBLOG(@"native-metal: command buffer refused: %@",what);}
++ // Recovery creates a new runtime device; launchd restarts a render server whose retained objects belong to the previous device.
++ if([what rangeOfString:@"MadeBeforeRecovery"].location!=NSNotFound)endRenderServerAfterGpuLoss();
+ }
+ - (MTLCommandBufferStatus)status {
+  if(self.failedLocally)return MTLCommandBufferStatusError;
