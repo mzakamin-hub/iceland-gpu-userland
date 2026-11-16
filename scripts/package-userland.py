@@ -11,6 +11,12 @@
                    "install": "Library/Audio/Plug-Ins/HAL/IcelandAudio.driver",   where the add-on puts it (see below)
                    "executables": ["Contents/MacOS/IcelandAudio"]}]}    bundle only: its Mach-O files, main one first
 
+A bundle that carries another bundle (an app with its system extension) names it under "nested":
+    "nested": [{"path": "Contents/Library/SystemExtensions/<id>.systemextension",   relative to the product
+                "identifier": "...", "entitlements": "extension.entitlements"}]    entitlements optional
+Each nested bundle is signed first, as a bundle of its own (its identifier, its entitlements, its seal); its Mach-O
+files still stand in the product's "executables", so the manifest records them like every other.
+
 Every Mach-O gets the signature the kernel's trust needs and nothing more: ad hoc (no identity, no key, no
 certificate), 4 KiB pages, the given identifier, no entitlements unless the product names an "entitlements" plist of
 ours. That is the signature adrenoprobed and the Metal plugin already carry. The owner key is never here: the owner
@@ -73,9 +79,17 @@ def main():
         record = dict(path=product['path'], identifier=product['identifier'], install=install, files=[])
         if path.is_dir():
             executables = product['executables']
-            # Inner Mach-O files first, the bundle (its main executable and its seal) last.
+            # Nested bundles first, then loose inner Mach-O files, the bundle (its main executable and its seal) last.
+            nested = product.get('nested', [])
+            for item in nested:
+                if item['path'].startswith('/') or '..' in item['path'].split('/') or not (path / item['path']).is_dir():
+                    sys.exit('%s: nested path must be a folder inside the product' % item['path'])
+                sign(path / item['path'], item['identifier'],
+                     component / item['entitlements'] if item.get('entitlements') else None)
+            inside = tuple(item['path'].rstrip('/') + '/' for item in nested)
             for relative in executables[1:]:
-                sign(path / relative, product['identifier'] + '.' + Path(relative).name, None)
+                if not relative.startswith(inside):
+                    sign(path / relative, product['identifier'] + '.' + Path(relative).name, None)
             sign(path, product['identifier'], entitlements)
             for item in sorted(p for p in path.rglob('*') if p.is_file()):
                 relative = item.relative_to(path).as_posix()

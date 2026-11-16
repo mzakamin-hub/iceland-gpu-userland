@@ -1,11 +1,28 @@
 {
   "component": "camera-cmio",
+  "note": "The extension ships inside the host app only, where the system looks for it (Contents/Library/SystemExtensions). 'nested' names it so that scripts/package-userland.py signs it as a bundle of its own (identifier and entitlements of its own) before the app around it.",
   "products": [
     {
-      "path": "IcelandCamera.systemextension",
-      "identifier": "org.iceland.camera.extension",
-      "install": "Library/Iceland/IcelandCamera.systemextension",
-      "executables": ["Contents/MacOS/IcelandCamera"]
+      "path": "IcelandCameraHost.app",
+      "identifier": "org.iceland.camera.host",
+      "install": "Library/Iceland/IcelandCameraHost.app",
+      "entitlements": "host/host.entitlements",
+      "nested": [
+        {
+          "path": "Contents/Library/SystemExtensions/org.iceland.camera.extension.systemextension",
+          "identifier": "org.iceland.camera.extension",
+          "entitlements": "extension.entitlements"
+        }
+      ],
+      "executables": [
+        "Contents/MacOS/IcelandCameraHost",
+        "Contents/Library/SystemExtensions/org.iceland.camera.extension.systemextension/Contents/MacOS/IcelandCamera"
+      ]
+    },
+    {
+      "path": "iceland-camera-probe",
+      "identifier": "org.iceland.camera-probe",
+      "install": "bin/iceland-camera-probe"
     }
   ]
 }

@@ -80,7 +80,7 @@ are ours and use public SDK headers only; nothing is fetched, so there is nothin
 | Component | Folder | Product | Lands at (boot add-on path) |
 |---|---|---|---|
 | `audio-hal` | `userland/audio-hal` | `IcelandAudio.driver`, a CoreAudio AudioServerPlugIn (HAL plug-in); a skeleton with no device yet | `Library/Audio/Plug-Ins/HAL/` |
-| `camera-cmio` | `userland/camera-cmio` | `IcelandCamera.systemextension`, a CoreMediaIO camera extension provider; a skeleton with no device yet | `Library/Iceland/` (a holding place until the camera work decides how it is started) |
+| `camera-cmio` | `userland/camera-cmio` | `IcelandCameraHost.app`, which asks the system to activate the CoreMediaIO camera extension it carries (`org.iceland.camera.extension`: one device, "Front Camera", 816 x 612 BGRA at 30 fps, from the in-kernel `IcelandCamera` service or a test pattern), and `iceland-camera-probe` (the service, the CoreMediaIO device list, pictures as a client gets them) | `Library/Iceland/` and `bin/` |
 | `tools` | `userland/tools` | `unixnu-absentd` (the pinned source of the `absentd` stage) and `iceland-audio-probe` (lists the audio devices coreaudiod publishes) | `bin/` |
 
 Each folder has a `build.sh` (compiles every source file of the folder for `arm64e-apple-macos27.0` into `$BUILD_DIR`)
