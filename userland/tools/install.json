@@ -10,6 +10,12 @@
       "path": "iceland-audio-probe",
       "identifier": "org.iceland.audio-probe",
       "install": "bin/iceland-audio-probe"
+    },
+    {
+      "path": "iceland-audio-rec",
+      "identifier": "org.iceland.audio-rec",
+      "install": "bin/iceland-audio-rec",
+      "entitlements": "iceland-audio-rec.entitlements"
     }
   ]
 }

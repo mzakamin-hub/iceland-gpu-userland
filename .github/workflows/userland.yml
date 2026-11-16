@@ -3,7 +3,7 @@ name: Userland (macOS 27, arm64e)
 # Our own macOS userland, built where Apple's macOS SDK may be used (GitHub's disposable Mac) and nowhere else:
 #   audio-hal    userland/audio-hal    IcelandAudio.driver, a CoreAudio AudioServerPlugIn (HAL plug-in)
 #   camera-cmio  userland/camera-cmio  IcelandCamera.systemextension, a CoreMediaIO camera extension
-#   tools        userland/tools        small helper programs (unixnu-absentd, iceland-audio-probe)
+#   tools        userland/tools        small helper programs (unixnu-absentd, iceland-audio-probe, iceland-audio-rec)
 # Sources are ours and public-SDK only. Each Mach-O leaves with an ad hoc signature (4 KiB pages, no identity, no key),
 # as adrenoprobed does; the owner key is never on GitHub, not even as a secret, and the owner trust entry is made on
 # the project machine from the CDHashes in userland-manifest.json. Nothing is fetched: no dependencies, no cache.

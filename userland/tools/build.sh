@@ -26,3 +26,9 @@ tool unixnu-absentd "CoreFoundation" "-Os -Wextra -fblocks" "$repo/absent-servic
 
 # Ours: lists the audio devices coreaudiod publishes (a boot-log check for the HAL plug-in).
 tool iceland-audio-probe "CoreAudio CoreFoundation" "-std=c11 -O2" "$here/iceland-audio-probe.c"
+
+# Ours: records from an input device through an AudioQueue and writes a WAV (the unattended check that macOS itself hears
+# the microphone). Its Info.plist rides in the binary (__TEXT,__info_plist) for the microphone's usage text; its
+# entitlement (install.json: com.apple.private.tcc.allow kTCCServiceMicrophone) holds only because the owner trust
+# bundle on the project machine lists the CDHash, as for every tool here.
+tool iceland-audio-rec "AudioToolbox CoreAudio CoreFoundation" "-std=c11 -O2 -sectcreate __TEXT __info_plist $here/iceland-audio-rec-Info.plist" "$here/iceland-audio-rec.c"
