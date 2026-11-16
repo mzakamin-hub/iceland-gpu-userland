@@ -1,11 +1,11 @@
 {
   "component": "camera-cmio",
-  "note": "The extension ships inside the host app only, where the system looks for it (Contents/Library/SystemExtensions). 'nested' names it so that scripts/package-userland.py signs it as a bundle of its own (identifier and entitlements of its own) before the app around it.",
+  "note": "Installed under bin/ (the add-on's /private/var/ngpu/bin): the boot add-on cannot make a new folder directly under /Library. The extension ships inside the host app only, where the system looks for it (Contents/Library/SystemExtensions). 'nested' names it so that scripts/package-userland.py signs it as a bundle of its own (identifier and entitlements of its own) before the app around it.",
   "products": [
     {
       "path": "IcelandCameraHost.app",
       "identifier": "org.iceland.camera.host",
-      "install": "Library/Iceland/IcelandCameraHost.app",
+      "install": "bin/IcelandCameraHost.app",
       "entitlements": "host/host.entitlements",
       "nested": [
         {

@@ -9,7 +9,7 @@
 //                     kIOReturnNotReady (the service is not streaming)
 //   selector 3 info:  0 in, 8 out: state (0 idle, 1 starting, 2 streaming, 3 failed), width, height, stride, bytes per
 //                     buffer, buffer count, the newest frame's sequence, clients
-//   selector 4 note:  3 in (kind, a, b), 0 out: one line in the kernel log, "icecamsvc: note pid P: <kind> a b", so a
+//   selector 4 note:  3 in (kind, a, b), 0 out: one line in the kernel log, "icecam: svc: note pid P: <kind>: a b", so a
 //                     boot log taken from the kernel alone tells what the userland did (the kinds are below)
 //   memory type 0 (IOConnectMapMemory64, kIOMapAnywhere | kIOMapReadOnly): every buffer back to back, buffer i at
 //                     i * bytes per buffer, each RAW10 MIPI-packed (see raw10.h)
