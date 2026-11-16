@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!-- Ours (MIT). iceland-camera-ui is started by a LaunchAgent with nobody to answer a privacy prompt, so it carries
+     the Accessibility API's TCC entitlement, as iceland-camera-probe carries the camera's and iceland-audio-rec the
+     microphone's. It means something only on our own kernel, where the owner trust bundle lists the tool's CDHash; the
+     signature stays ad hoc. -->
+<dict>
+	<key>com.apple.private.tcc.allow</key>
+	<array>
+		<string>kTCCServiceAccessibility</string>
+		<string>kTCCServicePostEvent</string>
+	</array>
+</dict>
+</plist>

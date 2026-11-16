@@ -24,6 +24,12 @@
       "identifier": "org.iceland.camera-probe",
       "install": "bin/iceland-camera-probe",
       "entitlements": "probe/probe.entitlements"
+    },
+    {
+      "path": "iceland-camera-ui",
+      "identifier": "org.iceland.camera-ui",
+      "install": "bin/iceland-camera-ui",
+      "entitlements": "ui/ui.entitlements"
     }
   ]
 }

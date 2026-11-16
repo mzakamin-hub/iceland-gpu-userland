@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Build the camera's userland into $BUILD_DIR: IcelandCameraHost.app, the little app that asks the system to activate
-# the CoreMediaIO camera extension it carries (IcelandCamera, at Contents/Library/SystemExtensions), and
-# iceland-camera-probe, the boot-log check. Called by scripts/build-userland.sh on the macOS runner with TARGET
-# (arm64e-apple-macos27.0), SDK_PATH and BUILD_DIR set. Every .m and .c file of this folder is compiled into the
-# extension, so new sources need no change here (host/ and probe/ are built on their own lines below); add a framework
-# to the link line when one is needed. Signing and packing are scripts/package-userland.py's, from install.json: the
-# extension inside the app is signed as a bundle of its own first ("nested"), with extension.entitlements, then the app
-# with host/host.entitlements.
+# the CoreMediaIO camera extension it carries (IcelandCamera, at Contents/Library/SystemExtensions), iceland-camera-probe,
+# the boot-log check, and iceland-camera-ui, which moves System Settings and Photo Booth for an unattended boot. Called
+# by scripts/build-userland.sh on the macOS runner with TARGET (arm64e-apple-macos27.0), SDK_PATH and BUILD_DIR set.
+# Every .m and .c file of this folder is compiled into the extension, so new sources need no change here (host/, probe/
+# and ui/ are built on their own lines below); add a framework to the link line when one is needed. Signing and packing
+# are scripts/package-userland.py's, from install.json: the extension inside the app is signed as a bundle of its own
+# first ("nested"), with extension.entitlements, then the app with host/host.entitlements.
 set -euo pipefail
 shopt -s nullglob
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -39,3 +39,11 @@ cp "$here/host/Info.plist" "$app/Contents/Info.plist"
     -framework CoreGraphics -framework ImageIO \
     -Wl,-sectcreate,__TEXT,__info_plist,"$here/probe/Info.plist" \
     -o "$BUILD_DIR/iceland-camera-probe" "$here/probe/iceland-camera-probe.c" "$here/iceland-camera-kernel.c"
+
+# The UI tool: also a plain C tool (-std=c11). It drives System Settings and Photo Booth through ApplicationServices'
+# Accessibility API, with ui/Info.plist embedded as the probe's is, for TCC's naming. ui/ is a folder of its own, so it
+# is not swept into the extension above (that line takes only this folder's *.m and *.c).
+"${compile[@]}" -std=c11 \
+    -framework CoreFoundation -framework ApplicationServices \
+    -Wl,-sectcreate,__TEXT,__info_plist,"$here/ui/Info.plist" \
+    -o "$BUILD_DIR/iceland-camera-ui" "$here/ui/iceland-camera-ui.c"
