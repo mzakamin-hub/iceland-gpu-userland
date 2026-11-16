@@ -22,7 +22,8 @@
     {
       "path": "iceland-camera-probe",
       "identifier": "org.iceland.camera-probe",
-      "install": "bin/iceland-camera-probe"
+      "install": "bin/iceland-camera-probe",
+      "entitlements": "probe/probe.entitlements"
     }
   ]
 }

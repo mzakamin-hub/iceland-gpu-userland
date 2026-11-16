@@ -1,8 +1,9 @@
 // Ours (MIT). iceland-camera-probe: what the camera looks like from outside, so a boot log says whether the pieces are
 // there. Public APIs only: IOKit for the in-kernel IcelandCamera service (../iceland-camera-kernel.h), CoreMediaIO's C
-// API for the devices the system lists and for taking pictures the way any camera client does. Exit code 0 whenever it
-// could report; the lines it prints ("camera-probe: ...", stderr) are the answer, and the two results that matter are
-// also sent to the kernel log (selector 4: "probe" and "probe frames").
+// API for the devices the system lists and for taking pictures the way any camera client does, ImageIO for the one
+// picture --save keeps. Exit code 0 whenever it could report; the lines it prints ("camera-probe: ...", stderr) are the
+// answer, and the results that matter are also sent to the kernel log (selector 4: "probe", "probe frames" and
+// "probe saved").
 //
 //   iceland-camera-probe                  the service and its info scalars, then the CoreMediaIO devices
 //   ... --frames N                        then N frames straight from the user client (start, wait, torn check, stop)
@@ -10,14 +11,26 @@
 //   ... --cmio-frames N                   then be a CoreMediaIO client of "Front Camera": start its stream, count N
 //                                         pictures (at most 20 s), stop
 //   ... --sessions K                      do the --frames part K times (the stream down and up again in between)
+//   ... --say TEXT                        say "camera-probe: TEXT" and exit at once, nothing else: a shell job's own line
+//                                         in the kernel log, which copies the stderr of a process named iceland-camera-*
+//   ... --save PATH                       with --cmio-frames: keep one of those pictures (the 30th, or the last when
+//                                         fewer arrive), write it as a JPEG to PATH, and say its size, its sha256 and
+//                                         the means of B, G and R
+//   ... --drop NODE                       with --save: also write that JPEG into NODE (/dev/icedrop, the node that sends
+//                                         it to the PC: open O_WRONLY, retry, write in 64 KiB chunks, close)
+#include <CommonCrypto/CommonDigest.h>
 #include <CoreFoundation/CoreFoundation.h>
+#include <CoreGraphics/CoreGraphics.h>
 #include <CoreMedia/CoreMedia.h>
 #include <CoreMediaIO/CMIOHardware.h>
 #include <CoreVideo/CoreVideo.h>
 #include <IOKit/IOKitLib.h>
 #include <IOKit/IOReturn.h>
+#include <ImageIO/ImageIO.h>
 #include <mach/mach.h>
 
+#include <fcntl.h>
+#include <pthread.h>
 #include <stdarg.h>
 #include <stdatomic.h>
 #include <stdio.h>
@@ -217,6 +230,15 @@ static atomic_long cmio_first_width;
 static atomic_long cmio_first_height;
 static CMSimpleQueueRef cmio_queue;
 
+// --save keeps one picture: the thirtieth received, or the last one when fewer arrive. queue_altered runs on CoreMediaIO's
+// queue, so what it keeps and what main() takes away are under this lock.
+static const long kCmioKeptPicture = 30;
+
+static pthread_mutex_t cmio_keep_lock = PTHREAD_MUTEX_INITIALIZER;
+static CVImageBufferRef cmio_kept;      // the picture kept, or NULL
+static long cmio_kept_number;           // its number: 1 for the first picture received
+static const char *cmio_save_path;      // --save's PATH, or NULL
+
 static void queue_altered(CMIOStreamID stream, void *token, void *context)
 {
     CMSampleBufferRef sample;
@@ -226,14 +248,206 @@ static void queue_altered(CMIOStreamID stream, void *token, void *context)
     (void)context;
     while (cmio_queue && (sample = (CMSampleBufferRef)CMSimpleQueueDequeue(cmio_queue)) != NULL) {
         CVImageBufferRef image = CMSampleBufferGetImageBuffer(sample);
+        long number = atomic_fetch_add(&cmio_pictures, 1) + 1;
 
-        if (image && atomic_load(&cmio_pictures) == 0) {
+        if (image && number == 1) {
             atomic_store(&cmio_first_width, (long)CVPixelBufferGetWidth(image));
             atomic_store(&cmio_first_height, (long)CVPixelBufferGetHeight(image));
         }
-        atomic_fetch_add(&cmio_pictures, 1);
+        // Every picture up to the thirtieth replaces the one kept: 30 when they all arrive, the last one when fewer do.
+        if (image && cmio_save_path && number <= kCmioKeptPicture) {
+            CVImageBufferRef previous;
+
+            CVPixelBufferRetain((CVPixelBufferRef)image);
+            pthread_mutex_lock(&cmio_keep_lock);
+            previous = cmio_kept;
+            cmio_kept = image;
+            cmio_kept_number = number;
+            pthread_mutex_unlock(&cmio_keep_lock);
+            if (previous)
+                CVPixelBufferRelease((CVPixelBufferRef)previous);
+        }
         CFRelease(sample);
     }
+}
+
+// ---- the kept picture, as a JPEG -----------------------------------------------------------------------------------
+
+// Everything, in 64 KiB pieces, as userland/tools/iceland-audio-rec.c writes its WAV.
+static int write_all(int fd, const uint8_t *data, size_t size)
+{
+    while (size) {
+        ssize_t written = write(fd, data, size > 65536 ? 65536 : size);
+
+        if (written <= 0)
+            return 0;
+        data += written;
+        size -= (size_t)written;
+    }
+    return 1;
+}
+
+// The drop node (/dev/icedrop) takes one file at a time: try for half a minute, as the recorder's -d does.
+static void write_into_node(const char *node, const uint8_t *data, size_t size)
+{
+    int written = 0;
+    int tries;
+
+    for (tries = 0; tries < 30 && !written; tries++) {
+        int fd = open(node, O_WRONLY);
+
+        if (fd >= 0) {
+            written = write_all(fd, data, size);
+            close(fd);
+            break;
+        }
+        sleep(1);
+    }
+    say("%s: the JPEG was %s", node, written ? "written into it" : "NOT written");
+}
+
+// Take the kept picture, make a JPEG of it, write that to `path`, and then into `node` when one was given.
+static void save_kept_picture(const char *path, const char *node)
+{
+    CVImageBufferRef image;
+    long number;
+    OSType format;
+    size_t width = 0;
+    size_t height = 0;
+    size_t stride = 0;
+    const uint8_t *base = NULL;
+    unsigned long long blue = 0;
+    unsigned long long green = 0;
+    unsigned long long red = 0;
+    unsigned long long samples = 0;
+    unsigned long long means[3];
+    CGColorSpaceRef colorspace = NULL;
+    CGContextRef context = NULL;
+    CGImageRef picture = NULL;
+    CFMutableDataRef jpeg = NULL;
+    CGImageDestinationRef destination = NULL;
+    const uint8_t *bytes;
+    size_t length;
+    unsigned char digest[CC_SHA256_DIGEST_LENGTH];
+    char sum[2 * CC_SHA256_DIGEST_LENGTH + 1];
+    int finalized = 0;
+    int written = 0;
+    int i;
+
+    pthread_mutex_lock(&cmio_keep_lock);
+    image = cmio_kept;
+    number = cmio_kept_number;
+    cmio_kept = NULL;
+    pthread_mutex_unlock(&cmio_keep_lock);
+    if (!image) {
+        say("no picture was kept for %s", path);
+        return;
+    }
+
+    format = CVPixelBufferGetPixelFormatType((CVPixelBufferRef)image);
+    if (format != kCVPixelFormatType_32BGRA) {
+        say("the kept picture %ld is not BGRA ('%c%c%c%c'), not saved", number, (char)((format >> 24) & 0xFF),
+            (char)((format >> 16) & 0xFF), (char)((format >> 8) & 0xFF), (char)(format & 0xFF));
+        CVPixelBufferRelease((CVPixelBufferRef)image);
+        return;
+    }
+    if (CVPixelBufferLockBaseAddress((CVPixelBufferRef)image, kCVPixelBufferLock_ReadOnly) != kCVReturnSuccess) {
+        say("the kept picture %ld could not be locked, not saved", number);
+        CVPixelBufferRelease((CVPixelBufferRef)image);
+        return;
+    }
+    width = CVPixelBufferGetWidth((CVPixelBufferRef)image);
+    height = CVPixelBufferGetHeight((CVPixelBufferRef)image);
+    stride = CVPixelBufferGetBytesPerRow((CVPixelBufferRef)image);
+    base = CVPixelBufferGetBaseAddress((CVPixelBufferRef)image);
+    if (base && stride >= width * 4) {
+        // The means, over every fourth pixel of every fourth line: B, G and R as the picture holds them.
+        for (size_t y = 0; y < height; y += 4) {
+            const uint8_t *row = base + y * stride;
+
+            for (size_t x = 0; x < width; x += 4) {
+                const uint8_t *pixel = row + x * 4;
+
+                blue += pixel[0];
+                green += pixel[1];
+                red += pixel[2];
+                samples++;
+            }
+        }
+        // The context writes nothing: it is only the way a CGImage is made of the picture's own bytes.
+        colorspace = CGColorSpaceCreateDeviceRGB();
+        context = CGBitmapContextCreate((void *)base, width, height, 8, stride, colorspace,
+                                        (CGBitmapInfo)(kCGImageAlphaNoneSkipFirst | kCGBitmapByteOrder32Little));
+        picture = context ? CGBitmapContextCreateImage(context) : NULL;
+        if (context)
+            CGContextRelease(context);
+        if (colorspace)
+            CGColorSpaceRelease(colorspace);
+    }
+    CVPixelBufferUnlockBaseAddress((CVPixelBufferRef)image, kCVPixelBufferLock_ReadOnly);
+    CVPixelBufferRelease((CVPixelBufferRef)image);
+    if (!picture) {
+        say("the kept picture %ld (%zu x %zu, stride %zu) made no CGImage, not saved", number, width, height, stride);
+        return;
+    }
+    means[0] = samples ? blue * 100 / samples : 0;
+    means[1] = samples ? green * 100 / samples : 0;
+    means[2] = samples ? red * 100 / samples : 0;
+
+    jpeg = CFDataCreateMutable(kCFAllocatorDefault, 0);
+    destination = jpeg ? CGImageDestinationCreateWithData(jpeg, CFSTR("public.jpeg"), 1, NULL) : NULL;
+    if (destination) {
+        float quality = 0.85f;
+        CFNumberRef quality_value = CFNumberCreate(kCFAllocatorDefault, kCFNumberFloat32Type, &quality);
+
+        if (quality_value) {
+            const void *keys[1] = {kCGImageDestinationLossyCompressionQuality};
+            const void *values[1] = {quality_value};
+            CFDictionaryRef properties = CFDictionaryCreate(kCFAllocatorDefault, keys, values, 1,
+                                                            &kCFTypeDictionaryKeyCallBacks,
+                                                            &kCFTypeDictionaryValueCallBacks);
+
+            CGImageDestinationAddImage(destination, picture, properties);
+            if (properties)
+                CFRelease(properties);
+            CFRelease(quality_value);
+        } else {
+            CGImageDestinationAddImage(destination, picture, NULL);
+        }
+        finalized = CGImageDestinationFinalize(destination) ? 1 : 0;
+        CFRelease(destination);
+    }
+    CGImageRelease(picture);
+    if (!finalized || !jpeg || CFDataGetLength(jpeg) <= 0) {
+        say("the kept picture %ld (%zu x %zu) made no JPEG, not saved", number, width, height);
+        if (jpeg)
+            CFRelease(jpeg);
+        return;
+    }
+
+    bytes = CFDataGetBytePtr(jpeg);
+    length = (size_t)CFDataGetLength(jpeg);
+    CC_SHA256(bytes, (CC_LONG)length, digest);
+    for (i = 0; i < CC_SHA256_DIGEST_LENGTH; i++)
+        snprintf(sum + 2 * i, 3, "%02x", digest[i]);
+    {
+        FILE *file = fopen(path, "wb");
+
+        if (file) {
+            written = fwrite(bytes, 1, length, file) == length;
+            fclose(file);
+        }
+    }
+    say("saved picture %ld (%zu x %zu) as %s: %zu B JPEG, sha256 %s, mean B G R %llu.%02llu %llu.%02llu %llu.%02llu",
+        number, width, height, path, length, sum, means[0] / 100, means[0] % 100, means[1] / 100, means[1] % 100,
+        means[2] / 100, means[2] % 100);
+    if (!written)
+        say("the JPEG could not be written to %s", path);
+    // The same in the kernel log: a = the JPEG's bytes, b = the picture's number.
+    iceland_camera_note(ICELAND_CAMERA_NOTE_PROBE_SAVED, (uint64_t)length, (uint64_t)number);
+    if (node)
+        write_into_node(node, bytes, length);
+    CFRelease(jpeg);
 }
 
 // The pictures a CoreMediaIO client gets from our device; *status is the first call that failed, or 0.
@@ -280,6 +494,9 @@ int main(int argc, char **argv)
     long cmio_frames = 0;
     long wait_seconds = 0;
     long sessions = 1;
+    const char *say_text = NULL;
+    const char *save_path = NULL;
+    const char *drop_node = NULL;
     iceland_camera_kernel kernel;
     CMIOObjectID ours = 0;
     unsigned listed;
@@ -297,11 +514,26 @@ int main(int argc, char **argv)
             value = &wait_seconds;
         else if (strcmp(argv[i], "--sessions") == 0)
             value = &sessions;
+        else if (i + 1 < argc) {
+            if (strcmp(argv[i], "--say") == 0)
+                say_text = argv[++i];
+            else if (strcmp(argv[i], "--save") == 0)
+                save_path = argv[++i];
+            else if (strcmp(argv[i], "--drop") == 0)
+                drop_node = argv[++i];
+        }
         if (value && i + 1 < argc) {
             *value = strtol(argv[++i], NULL, 10);
             if (*value < 0)
                 *value = 0;
         }
+    }
+
+    // --say is a shell job putting its own line into the kernel log (the kernel copies the stderr of a process named
+    // iceland-camera-*): nothing else happens, and nothing else is touched.
+    if (say_text) {
+        say("%s", say_text);
+        return 0;
     }
 
     opened = iceland_camera_kernel_open(&kernel);
@@ -329,9 +561,16 @@ int main(int argc, char **argv)
 
     if (cmio_frames > 0 && ours) {
         int status = 0;
-        long got = run_cmio_frames(ours, cmio_frames, &status);
+        long got;
 
+        // From here on queue_altered keeps a picture for --save.
+        cmio_save_path = save_path;
+        got = run_cmio_frames(ours, cmio_frames, &status);
         iceland_camera_note(ICELAND_CAMERA_NOTE_PROBE_FRAMES, (uint64_t)got, (uint64_t)(uint32_t)status);
+        if (save_path)
+            save_kept_picture(save_path, drop_node);
+    } else if (save_path) {
+        say("--save needs --cmio-frames and a device to run against: no picture was kept");
     }
     if (opened == 0)
         iceland_camera_kernel_close(&kernel);

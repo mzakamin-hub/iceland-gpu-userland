@@ -314,8 +314,13 @@ static NSError *iceland_camera_stream_error(NSInteger code, NSString *descriptio
         return;
     }
     if (waited != ICELAND_CAMERA_KERNEL_FRAME) {
+        // Said once; the pump goes on asking every 100 ms, so a stream the driver brings back (or a call that fails
+        // once) does not leave the client with a picture frozen for good. The client's stop still ends it.
         [self noteFailure:[NSString stringWithFormat:@"the kernel's wait answered %d", waited]];
-        return;                                  // the client's stop still logs "CMIO stream stop"
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 100 * NSEC_PER_MSEC), _queue, ^{
+            [self pumpKernel];
+        });
+        return;
     }
     if (frame.width != ICELAND_RAW10_SENSOR_WIDTH || frame.height != ICELAND_RAW10_SENSOR_HEIGHT ||
         frame.stride < (uint64_t)(ICELAND_RAW10_SENSOR_WIDTH / 4 * ICELAND_RAW10_GROUP_BYTES)) {

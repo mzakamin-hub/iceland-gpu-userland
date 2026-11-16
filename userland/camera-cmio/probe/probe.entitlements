@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!-- Ours (MIT). iceland-camera-probe is started by launchd with nobody to answer a privacy prompt, so it carries the
+     camera's TCC entitlement, as iceland-audio-rec carries the microphone's. It means something only on our own kernel,
+     where the owner trust bundle lists the probe's CDHash; the signature stays ad hoc. -->
+<dict>
+	<key>com.apple.private.tcc.allow</key>
+	<array>
+		<string>kTCCServiceCamera</string>
+	</array>
+	<key>com.apple.security.device.camera</key>
+	<true/>
+</dict>
+</plist>

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!-- Ours (MIT). iceland-camera-probe's Info.plist: it is not an app, so build.sh embeds this into the binary's
+     __TEXT,__info_plist section, which is how TCC can name the tool in the camera's approval prompt and remember an
+     answer for it. -->
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>org.iceland.camera-probe</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>iceland-camera-probe</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.3</string>
+	<key>CFBundleVersion</key>
+	<string>3</string>
+	<key>NSCameraUsageDescription</key>
+	<string>The camera probe takes pictures from the tablet's front camera to check that it works.</string>
+</dict>
+</plist>

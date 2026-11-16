@@ -48,6 +48,7 @@ enum {
     ICELAND_CAMERA_NOTE_PROBE_FRAMES = 8,   // "probe frames": a = frames a CoreMediaIO client received, b = a status
     ICELAND_CAMERA_NOTE_PROBE_SESSION = 9,  // "probe session": a = frames taken straight from the service, b = torn
     ICELAND_CAMERA_NOTE_PROBE_SESSION_END = 10, // "probe session end": a = why its loop ended, b = waits made
+    ICELAND_CAMERA_NOTE_PROBE_SAVED = 11,   // "probe saved": a = the JPEG's bytes, b = the picture's number
 };
 
 // The eight scalars selector 3 answers with.

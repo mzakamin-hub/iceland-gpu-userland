@@ -31,7 +31,11 @@ cp "$here/host/Info.plist" "$app/Contents/Info.plist"
     -framework Foundation -framework CoreFoundation -framework SystemExtensions -framework IOKit \
     -o "$app/Contents/MacOS/IcelandCameraHost" "$here/host"/*.m "$here/iceland-camera-kernel.c"
 
-# The probe: a plain C tool.
+# The probe: a plain C tool (-std=c11; CoreGraphics and ImageIO are C headers too, and are there for --save's JPEG).
+# probe/Info.plist goes into the binary's __TEXT,__info_plist section so that TCC can name the tool (the camera's
+# approval prompt) instead of showing it as an unknown program.
 "${compile[@]}" -std=c11 \
     -framework CoreFoundation -framework CoreMediaIO -framework CoreMedia -framework CoreVideo -framework IOKit \
+    -framework CoreGraphics -framework ImageIO \
+    -Wl,-sectcreate,__TEXT,__info_plist,"$here/probe/Info.plist" \
     -o "$BUILD_DIR/iceland-camera-probe" "$here/probe/iceland-camera-probe.c" "$here/iceland-camera-kernel.c"
