@@ -1,0 +1,11 @@
+{
+  "component": "bluetooth-scan",
+  "products": [
+    {
+      "path": "iceland-bt-scan",
+      "identifier": "org.iceland.bt-scan",
+      "install": "bin/iceland-bt-scan",
+      "entitlements": "iceland-bt-scan.entitlements.plist"
+    }
+  ]
+}

@@ -4,6 +4,7 @@ name: Userland (macOS 27, arm64e)
 #   audio-hal    userland/audio-hal    IcelandAudio.driver, a CoreAudio AudioServerPlugIn (HAL plug-in)
 #   camera-cmio  userland/camera-cmio  IcelandCamera.systemextension, a CoreMediaIO camera extension
 #   tools        userland/tools        small helper programs (unixnu-absentd, iceland-audio-probe, iceland-audio-rec)
+#   bluetooth-scan userland/bluetooth-scan  iceland-bt-scan, what Bluetooth's scanner hears (a boot-log check)
 # Sources are ours and public-SDK only. Each Mach-O leaves with an ad hoc signature (4 KiB pages, no identity, no key),
 # as adrenoprobed does; the owner key is never on GitHub, not even as a secret, and the owner trust entry is made on
 # the project machine from the CDHashes in userland-manifest.json. Nothing is fetched: no dependencies, no cache.
@@ -16,7 +17,7 @@ on:
       component:
         description: 'what to build'
         type: choice
-        options: [all, audio-hal, camera-cmio, tools]
+        options: [all, audio-hal, camera-cmio, tools, bluetooth-scan]
         required: true
         default: all
       xcode:
@@ -57,7 +58,7 @@ jobs:
         run: |
           set -euo pipefail
           case "$COMPONENT" in
-            all) components="audio-hal camera-cmio tools" ;;
+            all) components="audio-hal camera-cmio tools" ;;   # bluetooth-scan: only when asked for by name
             *) components="$COMPONENT" ;;
           esac
           # One component failing does not hide the others: each is built, then the step fails if any did.

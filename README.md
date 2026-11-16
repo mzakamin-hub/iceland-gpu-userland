@@ -85,6 +85,7 @@ are ours and use public SDK headers only; nothing is fetched, so there is nothin
 | `audio-hal` | `userland/audio-hal` | `IcelandAudio.driver`, a CoreAudio AudioServerPlugIn (HAL plug-in); a skeleton with no device yet | `Library/Audio/Plug-Ins/HAL/` |
 | `camera-cmio` | `userland/camera-cmio` | `IcelandCameraHost.app`, which asks the system to activate the CoreMediaIO camera extension it carries (`org.iceland.camera.extension`: one device, "Front Camera", 816 x 612 BGRA at 30 fps, from the in-kernel `IcelandCamera` service or a test pattern), and `iceland-camera-probe` (the service, the CoreMediaIO device list, pictures as a client gets them) | `Library/Iceland/` and `bin/` |
 | `tools` | `userland/tools` | `unixnu-absentd` (the pinned source of the `absentd` stage) and `iceland-audio-probe` (lists the audio devices coreaudiod publishes) and `iceland-audio-rec` (records from an input device through an AudioQueue into a WAV; entitled for the microphone) | `bin/` |
+| `bluetooth-scan` | `userland/bluetooth-scan` | `iceland-bt-scan`, which waits for CoreBluetooth's central manager to be powered on and scans 40 s, one line per new peripheral (an identifier's first 8 hex characters, no name or address) | `bin/` |
 
 Each folder has a `build.sh` (compiles every source file of the folder for `arm64e-apple-macos27.0` into `$BUILD_DIR`)
 and an `install.json` (the products, their signing identifiers and where the add-on puts them). To add code, drop
