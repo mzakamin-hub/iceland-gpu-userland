@@ -176,12 +176,22 @@ jobs:
         run: |
           # glslang: build-turnip-darwin.py refuses to run without glslangValidator. bison and flex: Mesa generates
           # ir3_parser.[ch] from ir3_parser.y and needs bison >= 3 and flex >= 2.6, while macOS ships bison 2.3 and
-          # flex 2.5; both formulas are keg-only, so their bins go on PATH for the build step.
-          brew install glslang bison flex
+          # flex 2.5; bison is keg-only, so its bin goes on PATH for the build step.
+          # flex is pinned to 2.6.4 and built from its release tarball (sha256-checked): flex 2.6.5..2.6.16 (10-17 Nov 2026,
+          # Homebrew followed) put "#define _POSIX_C_SOURCE 1" at the top of every generated scanner, which on macOS hides
+          # Dl_info/dladdr from src/util/disk_cache.h when Mesa compiles ir3_lexer.c (runs 44133142885, 44137387938).
+          brew install glslang bison
           echo "$(brew --prefix bison)/bin" >> "$GITHUB_PATH"
-          echo "$(brew --prefix flex)/bin" >> "$GITHUB_PATH"
           "$(brew --prefix bison)/bin/bison" --version | head -n 1
-          "$(brew --prefix flex)/bin/flex" --version
+          flex_dir="$RUNNER_TEMP/flex-2.6.4"
+          curl -fsSL -o "$RUNNER_TEMP/flex-2.6.4.tar.gz" https://github.com/westes/flex/releases/download/v2.6.4/flex-2.6.4.tar.gz
+          echo "e87aae032bf07c26f85ac0ed3250998c37621d95f8bd748b31f15b33c45ee995  $RUNNER_TEMP/flex-2.6.4.tar.gz" | shasum -a 256 -c -
+          tar -xzf "$RUNNER_TEMP/flex-2.6.4.tar.gz" -C "$RUNNER_TEMP"
+          (cd "$RUNNER_TEMP/flex-2.6.4" && ./configure --prefix="$flex_dir/install" --disable-nls --disable-shared > "$RUNNER_TEMP/flex-configure.log" 2>&1 \
+            && make -j"$(sysctl -n hw.ncpu)" > "$RUNNER_TEMP/flex-make.log" 2>&1 && make install > /dev/null 2>&1) \
+            || { tail -n 40 "$RUNNER_TEMP"/flex-*.log; exit 1; }
+          echo "$flex_dir/install/bin" >> "$GITHUB_PATH"
+          "$flex_dir/install/bin/flex" --version
 
       - name: Fetch the pinned sources
         run: bash scripts/prepare-inputs.sh unixnu mesa venv
