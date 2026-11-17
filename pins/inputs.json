@@ -50,7 +50,7 @@
     "compile_options_dump": {
       "path": "patches/adrenometal-compile-options-dump.patch",
       "applies_to": "drivers/AdrenoMetal",
-      "sha256": "b3a401f59b6957bf8c72f3ac8c7ef6c400fc933ed2a06d99e8b77820e6c43b0d"
+      "sha256": "aa9e132c4ab41b18dd3c5ab2e4a009df2c67ef6796db74593affcf886e518c7a"
     }
   },
   "mesa_patches": {

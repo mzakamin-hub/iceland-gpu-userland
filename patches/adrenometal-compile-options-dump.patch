@@ -1,40 +1,64 @@
-# AdrenoMetal: when a runtime MSL compile (MTLDevice newLibraryWithSource:) fails, the first three failures of a process also log
-# every property (and ivar name) of the caller's MTLCompileOptions object's real classes, private ones included, with values cut
-# to 160 characters. Photo Booth's Core Image kernels fail with "'CIKernelMetalLibPrivate.h' file not found": the header exists
-# nowhere on macOS 27.3 as a file (its text is inside CoreImage, behind #ifndef __BUILDING_RUNTIME_COMPILE_HEADER__), so Core
-# Image hands it to Apple's compiler some other way; this names how. Log only, ours, MIT as the file it patches. Applies after
-# adrenometal-source-compile-frameworks.patch on AdrenoMetal 8c7f950 (R2507).
+# AdrenoMetal: the first three failures of a runtime MSL compile log every property (and ivar name) of the caller's
+# MTLCompileOptions object's real classes, private ones included, values cut to 160 characters. v3: the options are
+# stashed at the top of newLibraryWithSource:options:error: and the dump runs in compileMetalSource's failure path, both
+# places far from the source-compile-frameworks patch's hunks, so verify-pins' reverse checks pass in every order.
+# Photo Booth's Core Image kernels fail with "'CIKernelMetalLibPrivate.h' file not found" and the header exists nowhere
+# on macOS 27.3 as a file (its text is inside CoreImage, behind #ifndef __BUILDING_RUNTIME_COMPILE_HEADER__), so Core
+# Image hands it to Apple's compiler some other way; this names how. Log only; ours, MIT as the file it patches.
+# Applies after adrenometal-source-compile-frameworks.patch on AdrenoMetal 8c7f950 (R2507).
 diff --git a/NativeBridgeMetalFrontend.mm b/NativeBridgeMetalFrontend.mm
-index eb8f883..24b7981 100644
+index eb8f883..789b3ce 100644
 --- a/NativeBridgeMetalFrontend.mm
 +++ b/NativeBridgeMetalFrontend.mm
-@@ -4808,6 +4808,29 @@ static void reportUnreadableLibrary(NSString *path) {
-  NSData *metallib=compileMetalSource(source,compileArguments(options),&warnings,&failure);
-  if(!metallib) {
-   NBLOG(@"native-metal: newLibraryWithSource: %@ | compiler %s",[failure substringToIndex:MIN(failure.length,(NSUInteger)2000)],gCompilerLoaded);
-+  // What the caller handed over with this source, for the first failures of a process: every property of the options' real
-+  // classes (private ones too) with its value, so a client that supplies headers or precompiled state some other way (Core
-+  // Image's runtime-compile header) shows how. Log only; nothing is changed.
-+  static std::atomic<int> optionsDumps{0};
-+  if(options && optionsDumps.fetch_add(1)<3) {
-+   NSMutableString *dump=[NSMutableString stringWithFormat:@"native-metal: options %@ (source %lu B):",NSStringFromClass(object_getClass(options)),(unsigned long)source.length];
-+   for(Class c=object_getClass(options);c && c!=[NSObject class];c=class_getSuperclass(c)) {
-+    unsigned count=0;
-+    objc_property_t *props=class_copyPropertyList(c,&count);
-+    for(unsigned i=0;i<count;i++) {
-+     NSString *name=[NSString stringWithUTF8String:property_getName(props[i])];
-+     NSString *text=@"?";
-+     @try {id value=[options valueForKey:name];text=value?[value description]:@"nil";} @catch(NSException *e) {text=[@"(exception) " stringByAppendingString:e.name];}
-+     [dump appendFormat:@" %@.%@=%@",NSStringFromClass(c),name,[text substringToIndex:MIN(text.length,(NSUInteger)160)]];
-+    }
-+    free(props);
-+    unsigned ivars=0;
-+    Ivar *list=class_copyIvarList(c,&ivars);
-+    for(unsigned i=0;i<ivars;i++)[dump appendFormat:@" ivar:%@.%s",NSStringFromClass(c),ivar_getName(list[i])];
-+    free(list);
-+   }
-+   NBLOG(@"%@",[dump substringToIndex:MIN(dump.length,(NSUInteger)6000)]);
+@@ -868,6 +868,31 @@ static NSData *codeGenRequest(uint32_t type,const std::vector<uint8_t> &request,
+ // pipeline's tessellation state and vertex inputs (what an app's tessellation asks of the bridge).
+ static const bool gDumpTessellation=getenv("NATIVE_METAL_DUMP_TESS")!=nullptr;
+ static void dumpText(NSString *text) {NSData *bytes=[text dataUsingEncoding:NSUTF8StringEncoding];(void)!write(2,bytes.bytes,bytes.length);}
++// The caller's compile options, as the first failures of a process see them (v3): Photo Booth's Core Image kernels
++// fail with "'CIKernelMetalLibPrivate.h' file not found" and the header exists nowhere on macOS 27.3 as a file, so a
++// client that supplies it some other way shows how. Logged from compileMetalSource's failure path; the options object
++// is stashed at the top of the only caller's method, far from the source-compile-frameworks patch's hunk. Log only.
++static void nbDumpOptions(id options,NSUInteger sourceBytes) {
++ if(!options)return;
++ NSMutableString *dump=[NSMutableString stringWithFormat:@"native-metal: options %@ (source %lu B):",NSStringFromClass(object_getClass(options)),(unsigned long)sourceBytes];
++ for(Class c=object_getClass(options);c && c!=[NSObject class];c=class_getSuperclass(c)) {
++  unsigned count=0;
++  objc_property_t *props=class_copyPropertyList(c,&count);
++  for(unsigned i=0;i<count;i++) {
++   NSString *name=[NSString stringWithUTF8String:property_getName(props[i])];
++   NSString *text=@"?";
++   @try {id value=[options valueForKey:name];text=value?[value description]:@"nil";} @catch(NSException *e) {text=[@"(exception) " stringByAppendingString:e.name];}
++   [dump appendFormat:@" %@.%@=%@",NSStringFromClass(c),name,[text substringToIndex:MIN(text.length,(NSUInteger)160)]];
 +  }
-   if(error)*error=[NSError errorWithDomain:MTLLibraryErrorDomain code:MTLLibraryErrorCompileFailure userInfo:@{NSLocalizedDescriptionKey:failure}];
-   return nil;
-  }
++  free(props);
++  unsigned ivars=0;
++  Ivar *list=class_copyIvarList(c,&ivars);
++  for(unsigned i=0;i<ivars;i++)[dump appendFormat:@" ivar:%@.%s",NSStringFromClass(c),ivar_getName(list[i])];
++  free(list);
++ }
++ NBLOG(@"%@",[dump substringToIndex:MIN(dump.length,(NSUInteger)6000)]);
++}
++static id gLastCompileOptions;
+ static NSData *compileMetalSource(NSString *source,NSString *arguments,NSString **warnings,NSString **failure) {
+  if(gDumpTessellation && [source containsString:@"[[patch"])
+   dumpText([NSString stringWithFormat:@"\n=== native-metal tessellation source (options %@) ===\n%@\n=== end ===\n",arguments,source]);
+@@ -877,7 +902,10 @@ static NSData *compileMetalSource(NSString *source,NSString *arguments,NSString
+  std::vector<uint8_t> request(16+sourceBytes+optionBytes,0);
+  memcpy(request.data(),&sourceBytes,8);memcpy(request.data()+8,&optionBytes,8);
+  memcpy(request.data()+16,text.bytes,text.length);memcpy(request.data()+16+sourceBytes,options,optionBytes);
+- return codeGenRequest(13,request,warnings,failure);
++ NSData *result=codeGenRequest(13,request,warnings,failure);
++ static std::atomic<int> dumps{0};
++ if(!result && dumps.fetch_add(1)<3)nbDumpOptions(gLastCompileOptions,request.size());
++ return result;
+ }
+ // The front end's arguments for a set of compile options, as Metal passes them: the language version, math mode and FP32 functions,
+ // invariance, size optimization and the preprocessor macros; module caches in this process's temporary directory, which a sandboxed
+@@ -4799,6 +4827,7 @@ static void reportUnreadableLibrary(NSString *path) {
+ - (id<MTLLibrary>)newDefaultLibrary {return [(id<MTLDevice>)self newDefaultLibraryWithBundle:[NSBundle mainBundle] error:nil];}
+ - (id<MTLLibrary>)newLibraryWithSource:(NSString *)source options:(MTLCompileOptions *)options error:(NSError **)error {
+  if(!source){if(error)*error=nbError(@"no source");return nil;}
++ gLastCompileOptions=options;
+  if(options && options.libraryType==MTLLibraryTypeDynamic) {
+   if(error)*error=[NSError errorWithDomain:MTLLibraryErrorDomain code:MTLLibraryErrorUnsupported
+                                   userInfo:@{NSLocalizedDescriptionKey:@"dynamic libraries are not supported"}];
