@@ -1,0 +1,38 @@
+# AdrenoMetal: a runtime MSL compile (MTLDevice newLibraryWithSource:) gets the framework search paths and the caller's own compiler
+# arguments. A source that #includes a framework header was refused with "'CIKernelMetalLib.h' file not found" (Photo Booth's Core
+# Image kernels) because compileArguments() passed none; Metal's own compiler service passes the system frameworks and whatever the
+# options' private SPI carries, and this does too. The source-compile failure line now logs the whole diagnostic (2000 characters,
+# was 300) so a boot's log shows the message instead of its first line. Ours, MIT as the file it patches; applies to 73d582f.
+diff --git a/NativeBridgeMetalFrontend.mm b/NativeBridgeMetalFrontend.mm
+index c955d67..b6c3e42 100644
+--- a/NativeBridgeMetalFrontend.mm
++++ b/NativeBridgeMetalFrontend.mm
+@@ -893,6 +893,19 @@ static NSString *compileArguments(MTLCompileOptions *options) {
+   [arguments addObject:compileArgument([NSString stringWithFormat:@"-D%@=%@",name,value])];
+  }];
+  [arguments addObject:compileArgument([@"-fmodules-cache-path=" stringByAppendingString:[NSTemporaryDirectory() stringByAppendingPathComponent:@"m2v-msl"]])];
++ // A source that includes framework headers ("'CIKernelMetalLib.h' file not found" from Photo Booth's Core Image kernels): the system
++ // frameworks for <Framework/Header.h> and Core Image's own headers directory, as MTLCompilerService finds them.
++ [arguments addObject:@"-F/System/Library/Frameworks"];
++ [arguments addObject:@"-I/System/Library/Frameworks/CoreImage.framework/Headers"];
++ // The caller's own arguments where its options carry some (private SPI, asked first): its include paths and flags are what the
++ // kernels expect, and a client that sets none passes none.
++ for(NSString *name in @[@"additionalCompilerArguments",@"compilerArguments"]) {
++  const SEL selector=NSSelectorFromString(name);
++  if(options && [options respondsToSelector:selector]) {
++   id extra=((id (*)(id,SEL))objc_msgSend)(options,selector);
++   if([extra isKindOfClass:[NSArray class]])for(id argument in (NSArray *)extra)if([argument isKindOfClass:[NSString class]])[arguments addObject:compileArgument(argument)];
++  }
++ }
+  return [arguments componentsJoinedByString:@" "];
+ }
+ static NSError *nbError(NSString *why) {
+@@ -4568,7 +4581,7 @@ static void reportUnreadableLibrary(NSString *path) {
+  NSString *warnings=nil,*failure=nil;
+  NSData *metallib=compileMetalSource(source,compileArguments(options),&warnings,&failure);
+  if(!metallib) {
+-  NBLOG(@"native-metal: newLibraryWithSource: %@ | compiler %s",[failure substringToIndex:MIN(failure.length,(NSUInteger)300)],gCompilerLoaded);
++  NBLOG(@"native-metal: newLibraryWithSource: %@ | compiler %s",[failure substringToIndex:MIN(failure.length,(NSUInteger)2000)],gCompilerLoaded);
+   if(error)*error=[NSError errorWithDomain:MTLLibraryErrorDomain code:MTLLibraryErrorCompileFailure userInfo:@{NSLocalizedDescriptionKey:failure}];
+   return nil;
+  }

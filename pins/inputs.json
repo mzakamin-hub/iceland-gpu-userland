@@ -66,6 +66,11 @@
       "path": "patches/adrenometal-gpu-prime-switch.patch",
       "applies_to": "drivers/AdrenoMetal",
       "sha256": "8f23748165681e3fa81dffaaf5ddbdeaff46c5d31aa595569d8bb971a4eabc8d"
+    },
+    "source_compile_frameworks": {
+      "path": "patches/adrenometal-source-compile-frameworks.patch",
+      "applies_to": "drivers/AdrenoMetal",
+      "sha256": "43df8fbf5c5247dc36409519af8223af950890c2a520cadaf4cebc0bfb93ffa5"
     }
   },
   "mesa_patches": {
