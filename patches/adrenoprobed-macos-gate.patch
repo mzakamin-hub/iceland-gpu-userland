@@ -1,8 +1,8 @@
-# adrenoprobed on macOS (S11 g6, our patch to AdrenoMetal at the pin c1351337, MIT upstream): the probe daemon matched
+# adrenoprobed on macOS (S11 g6, our patch to AdrenoMetal, first written at the pin c1351337, MIT upstream): the probe daemon matched
 # IOAcceleratorES only (NativeAdrenoProbeDaemon.cpp:23), which macOS does not have, so it never found a service and
 # exited 3. Under TARGET_OS_OSX it now matches AGXAccelerator, the IOAccelerator the kernel publishes and the name the
-# plugin already gives Turnip (NativeAdrenoMetalPlugin.mm:395, TU_DARWIN_SERVICE). Checked to apply at the pin after
-# adrenometal-pinned-source-build.patch. Owner's go to dispatch: 14 Nov 2026.
+# plugin already gives Turnip (NativeAdrenoMetalPlugin.mm, TU_DARWIN_SERVICE). Checked to apply unchanged at AdrenoMetal main
+# 8c7f950 (R2507, 17 Nov 2026). Owner's go to dispatch: 14 Nov 2026.
 --- a/NativeAdrenoProbeDaemon.cpp	2026-11-13 23:33:19.747027658 +0200
 +++ b/NativeAdrenoProbeDaemon.cpp	2026-11-13 23:33:19.765354637 +0200
 @@ -4,6 +4,7 @@

@@ -2,7 +2,8 @@
 # arguments. A source that #includes a framework header was refused with "'CIKernelMetalLib.h' file not found" (Photo Booth's Core
 # Image kernels) because compileArguments() passed none; Metal's own compiler service passes the system frameworks and whatever the
 # options' private SPI carries, and this does too. The source-compile failure line now logs the whole diagnostic (2000 characters,
-# was 300) so a boot's log shows the message instead of its first line. Ours, MIT as the file it patches; applies to 73d582f.
+# was 300) so a boot's log shows the message instead of its first line. Ours, MIT as the file it patches; applies unchanged to
+# AdrenoMetal main 8c7f950 (R2507, 17 Nov 2026), where compileArguments() still passes no framework paths.
 diff --git a/NativeBridgeMetalFrontend.mm b/NativeBridgeMetalFrontend.mm
 index c955d67..b6c3e42 100644
 --- a/NativeBridgeMetalFrontend.mm

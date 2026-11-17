@@ -11,7 +11,8 @@
 # because Core Animation's corner restore, blur, backdrop and blended materials read the destination and without fetch still take
 # that path. Boot-arg agx-mac-fetch=0 (NATIVE_METAL_MAC_FETCH=0) answers NO again and sets Core Animation's
 # CA_DISABLE_GENERIC_SHADERS (its generic pipeline needs fetch), the earlier behaviour, to compare. Without agx-mac-profile=1 every
-# answer is as before. Applies after adrenometal-universal-library-entries.patch.
+# answer is as before. Re-based onto AdrenoMetal main 8c7f950 (R2507, 17 Nov 2026) with no change to its hunks; it applies on the
+# pin alone now (adrenometal-universal-library-entries.patch, after which it used to go, is upstream since R2507).
 diff --git a/NativeBridgeMetalFrontend.mm b/NativeBridgeMetalFrontend.mm
 index 8edc46b..2cdae93 100644
 --- a/NativeBridgeMetalFrontend.mm

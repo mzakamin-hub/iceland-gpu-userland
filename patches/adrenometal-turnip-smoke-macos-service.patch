@@ -1,9 +1,9 @@
-# Turnip smoke on macOS (S11 gpuu-1, our patch to AdrenoMetal at the pin 73d582f, MIT upstream): turnip::run defaults
+# Turnip smoke on macOS (S11 gpuu-1, our patch to AdrenoMetal, first written at the pin 73d582f, MIT upstream): turnip::run defaults
 # TU_DARWIN_SERVICE to IOAcceleratorES, iPadOS' accelerator (NativeTurnipSmoke.h:434, setenv without overwrite). In the plugin
 # that is harmless (NativeAdrenoMetalPlugin.mm:398 sets AGXAccelerator first, overwriting), but adrenoprobed's Turnip phase
 # (the t3 triangle, after its raw test) runs it with nothing set first and so opened a service macOS does not have. Under
 # TARGET_OS_OSX the default is AGXAccelerator, the name the probe daemon's gate (adrenoprobed-macos-gate.patch) matches.
-# Checked to apply at 73d582f, before or after the gate patch (they touch different files).
+# Checked to apply unchanged at AdrenoMetal main 8c7f950 (R2507, 17 Nov 2026), before or after the gate patch (different files).
 diff --git a/NativeTurnipSmoke.h b/NativeTurnipSmoke.h
 index 4d17e26..3e9e166 100644
 --- a/NativeTurnipSmoke.h

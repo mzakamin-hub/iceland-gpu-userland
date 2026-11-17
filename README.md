@@ -22,18 +22,19 @@ MIT upstream file under that file's licence. Each file's header says why it exis
 |---|---|---|
 | `adrenoprobed-macos-gate.patch` | AdrenoMetal | the probe daemon matched only iPadOS' `IOAcceleratorES`; on macOS it matches `AGXAccelerator` |
 | `adrenometal-turnip-smoke-macos-service.patch` | AdrenoMetal | the daemon's Turnip phase defaulted `TU_DARWIN_SERVICE` to `IOAcceleratorES`; macOS: `AGXAccelerator` |
-| `adrenometal-function-lookup-errors.patch` | AdrenoMetal | upstream 6d4a3f3 (MIT, unmerged in main): a function missing from a library answers `MTLLibraryErrorFunctionNotFound`, so Core Image tries its next library instead of failing (`_lanczosDownV`/`H`) |
-| `adrenometal-universal-library-entries.patch` | AdrenoMetal | the .mm parts of upstream 99da261 + 0e018dc (MIT), re-based: a universal metallib's entries are read from its AIR64 slice, so the not-found answer also reaches universal libraries |
 | `adrenometal-mac-gpu-profile.patch` | AdrenoMetal | ours (facts from macos-uke and SnapMetal), with boot-arg `agx-mac-profile=1` only: a Mac GPU of no Apple family (Common1-3, Mac2; featureProfile 10001), no function pointers, dynamic libraries, SIMD-group, tile, image-block or memoryless features, linear rows of 64 bytes or more, IOSurface and read-only linear alignment 16; framebuffer fetch stays the runtime's answer (yes on Turnip: without it Core Animation drew round shapes as diamonds and materials dark), and boot-arg `agx-mac-fetch=0` answers NO again with Core Animation's `CA_DISABLE_GENERIC_SHADERS` |
-| `adrenometal-ci-mps.patch` | AdrenoMetal | ours (fact from upstream 19d6bcf, MIT), macOS only: with boot-arg `ci-mps=0` the plugin sets `CI_ENABLE_MPS=0` (not overwriting), so Core Image blurs with its own kernels instead of MPS (iconservicesagent's abort in MPSImage under `CIBlurProcessor`) |
 | `adrenometal-half-each-operation.patch` | AdrenoMetal | ours (fact from upstream ce37cbc and ce8986f, MIT), macOS only: with boot-arg `agx-half-each=1` the translator states every `half` operation in `float` with its conversion (`HalfChainPolicy::EachOperation`) instead of leaving it to the GPU's 16-bit registers; a comparison switch, off by default |
-| `adrenometal-recovered-object-restart.patch` | AdrenoMetal | upstream adddc7b's second hunk (MIT): the render server ends itself, for launchd to start it again, when a command buffer is refused with `MadeBeforeRecovery` (objects kept from before the runtime recovered its device) |
-| `adrenometal-gpu-prime-switch.patch` | AdrenoMetal | ours (fact from upstream c890147, MIT), macOS only: with boot-arg `gpu-prime=0` the render server starts no shader priming thread; a diagnostic for pacing comparisons |
 | `adrenometal-source-compile-frameworks.patch` | AdrenoMetal | ours: a runtime MSL compile (`newLibraryWithSource:`) gets `-F/System/Library/Frameworks`, Core Image's headers directory and the caller's own `additionalCompilerArguments`/`compilerArguments` where its options carry them (Photo Booth's Core Image kernels `#include` `CIKernelMetalLib.h`), and the source-compile failure line logs the whole diagnostic (2000 characters, was 300) |
-| `mesa-iceland-1-bo-finish-order.patch` | Mesa, after UniXNU's record | a freed BO's slot is zeroed inside the retire lock, before its handle can be handed out again |
 | `mesa-iceland-2-ir3-round-default.patch` | Mesa, after UniXNU's record | `cov` rounds to nearest even when no rounding mode is declared (it truncated) |
 | `mesa-iceland-4-macos-service.patch` | Mesa, after UniXNU's record | Turnip's own default service on macOS is `AGXAccelerator` |
 | `mesa-iceland-5-dsb-submit.patch` | Mesa, after UniXNU's record | `dsb sy` before every Submit and at the end of `vkEndCommandBuffer` |
+
+Six patches are retired at AdrenoMetal main `8c7f950` (R2507, 17 Nov 2026) because upstream now carries them, and their
+files are gone from `patches/`: `function-lookup-errors` (6d4a3f3), `universal-library-entries` (99da261 + 0e018dc),
+`ci-mps` (19d6bcf, verbatim), `recovered-object-restart` (adddc7b) and `gpu-prime-switch` (c890147, whose `gpu-prime=0`
+has nothing to switch off on macOS any more: R2507 puts the primer under `#if !TARGET_OS_OSX`), plus
+`mesa-iceland-1-bo-finish-order`, whose fix is UniXNU's own record patch `turnip-darwin-bo-finish-clears-under-lock.patch`
+now (it zeroes the freed BO's slot inside the retire lock too).
 
 The Mesa patches are appended to UniXNU's own record (`scripts/data/adreno-compiler-inputs.json`) in the checkout, so
 UniXNU's build guard (`scripts/mesa_patch_identity.py`) checks them with the rest. Not carried, on purpose:
@@ -42,19 +43,26 @@ no submission has resolved yet. No `gpu_id` special case for the A840: Mesa `85f
 its `0xffff44050A31` entry ("Adreno (TM) 840", fuse-id wildcard) whatever `gpu_id` the back end decodes.
 
 The compile fix this repository carried for AdrenoMetal `c1351337` (`adrenometal-pinned-source-build.patch`) is gone:
-`73d582f` has both defects fixed upstream.
+`73d582f` has both defects fixed upstream, and so does `8c7f950`.
 
 ## What it builds
 
-Pinned sources: UniXNU `d8210e08` (main, 14 Nov 2026) with `AdrenoMetal` `73d582f`, `Adreno740` `54b41b8`,
-`GopFramebuffer`, `AdrenoPM4` and `AdrenoFirmware`; the Mesa mirror at `85fda3b` plus UniXNU's 23 recorded patches and our
-four; the metal2vulkan bridge at `555b13d` plus its own 12.
+Pinned sources: UniXNU `429d337` (main, 17 Nov 2026) with `AdrenoMetal` `8c7f950` (R2507), `Adreno740` `1c9029b`,
+`GopFramebuffer`, `AdrenoPM4` and `AdrenoFirmware`; the Mesa mirror at `85fda3b` plus UniXNU's 24 recorded patches and our
+three; the metal2vulkan bridge at `46e7cc96` plus the bridge patch `build-adreno-metal-bridge.py` applies at that pin
+(`0063-main-optimizations-on-development-46e7cc96.patch`).
 
 1. `python3 scripts/build-turnip-darwin.py --target macos27` — Mesa's freedreno Vulkan driver (Turnip) with UniXNU's
    Darwin kernel backend, `arm64e-apple-macos27.0`.
 2. `python3 scripts/build-adreno-metal-plugin.py --target macos27 --no-replay` — the Metal plugin bundle
    (`NativeAdrenoMetal.bundle`, macOS `Contents/` layout) and the `adrenoprobed` probe daemon, both ad-hoc signed with
-   4 KiB pages by Apple's own `codesign`.
+   4 KiB pages by Apple's own `codesign`. At `8c7f950` the same script also builds `Shader Cache.app` (its worker and
+   its LaunchServices registration helper) into that output directory and writes `shader-cache-trust.json`; it is **not**
+   packed into our boot add-on yet: the app's entries go to `Applications/`, which the kernel's addon mount writes below
+   `/private/var/ngpu` until the XNU hunk `macos-addon-applications.patch` (UniXNU, 17 Nov: `bsd/kern/kern_exec.c`
+   maps `Applications/` to the Data volume's `/Applications` and keeps GPU bundle protection on `GPUBundles/` alone) is in
+   our kernel, and its three CDHashes must first join the owner trust module.
+
 
 Both scripts are UniXNU's, run unmodified. `--no-replay` only skips `gen-turnip-replay.py`, which captures a host
 simulation's first submission; the plugin's `TurnipReplay.h` is optional (`NativeAdrenoUserTest.h` includes it under
