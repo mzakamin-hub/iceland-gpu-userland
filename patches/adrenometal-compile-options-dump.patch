@@ -1,0 +1,40 @@
+# AdrenoMetal: when a runtime MSL compile (MTLDevice newLibraryWithSource:) fails, the first three failures of a process also log
+# every property (and ivar name) of the caller's MTLCompileOptions object's real classes, private ones included, with values cut
+# to 160 characters. Photo Booth's Core Image kernels fail with "'CIKernelMetalLibPrivate.h' file not found": the header exists
+# nowhere on macOS 27.3 as a file (its text is inside CoreImage, behind #ifndef __BUILDING_RUNTIME_COMPILE_HEADER__), so Core
+# Image hands it to Apple's compiler some other way; this names how. Log only, ours, MIT as the file it patches. Applies after
+# adrenometal-source-compile-frameworks.patch on AdrenoMetal 8c7f950 (R2507).
+diff --git a/NativeBridgeMetalFrontend.mm b/NativeBridgeMetalFrontend.mm
+index eb8f883..24b7981 100644
+--- a/NativeBridgeMetalFrontend.mm
++++ b/NativeBridgeMetalFrontend.mm
+@@ -4808,6 +4808,29 @@ static void reportUnreadableLibrary(NSString *path) {
+  NSData *metallib=compileMetalSource(source,compileArguments(options),&warnings,&failure);
+  if(!metallib) {
+   NBLOG(@"native-metal: newLibraryWithSource: %@ | compiler %s",[failure substringToIndex:MIN(failure.length,(NSUInteger)2000)],gCompilerLoaded);
++  // What the caller handed over with this source, for the first failures of a process: every property of the options' real
++  // classes (private ones too) with its value, so a client that supplies headers or precompiled state some other way (Core
++  // Image's runtime-compile header) shows how. Log only; nothing is changed.
++  static std::atomic<int> optionsDumps{0};
++  if(options && optionsDumps.fetch_add(1)<3) {
++   NSMutableString *dump=[NSMutableString stringWithFormat:@"native-metal: options %@ (source %lu B):",NSStringFromClass(object_getClass(options)),(unsigned long)source.length];
++   for(Class c=object_getClass(options);c && c!=[NSObject class];c=class_getSuperclass(c)) {
++    unsigned count=0;
++    objc_property_t *props=class_copyPropertyList(c,&count);
++    for(unsigned i=0;i<count;i++) {
++     NSString *name=[NSString stringWithUTF8String:property_getName(props[i])];
++     NSString *text=@"?";
++     @try {id value=[options valueForKey:name];text=value?[value description]:@"nil";} @catch(NSException *e) {text=[@"(exception) " stringByAppendingString:e.name];}
++     [dump appendFormat:@" %@.%@=%@",NSStringFromClass(c),name,[text substringToIndex:MIN(text.length,(NSUInteger)160)]];
++    }
++    free(props);
++    unsigned ivars=0;
++    Ivar *list=class_copyIvarList(c,&ivars);
++    for(unsigned i=0;i<ivars;i++)[dump appendFormat:@" ivar:%@.%s",NSStringFromClass(c),ivar_getName(list[i])];
++    free(list);
++   }
++   NBLOG(@"%@",[dump substringToIndex:MIN(dump.length,(NSUInteger)6000)]);
++  }
+   if(error)*error=[NSError errorWithDomain:MTLLibraryErrorDomain code:MTLLibraryErrorCompileFailure userInfo:@{NSLocalizedDescriptionKey:failure}];
+   return nil;
+  }
