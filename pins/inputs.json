@@ -45,7 +45,7 @@
     "source_compile_frameworks": {
       "path": "patches/adrenometal-source-compile-frameworks.patch",
       "applies_to": "drivers/AdrenoMetal",
-      "sha256": "c38fbcad78f619d2c6c2ec635197af49e828ba3188e0efff1daa0d600ffa8f35"
+      "sha256": "02c8a889940903aac6902142e1127248ef95b2892f7f4dc2e7094ea16531b91a"
     },
     "compile_options_dump": {
       "path": "patches/adrenometal-compile-options-dump.patch",

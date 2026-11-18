@@ -4,10 +4,6 @@
 # under /private/var/ngpu/ci-headers and this adds that directory to the compile's search. Ours, MIT as the file it
 # patches; applies unchanged on AdrenoMetal main 8c7f950 (R2507).
 diff --git a/NativeBridgeMetalFrontend.mm b/NativeBridgeMetalFrontend.mm
-index e9aceb2..7022116 100644
---- a/NativeBridgeMetalFrontend.mm
-+++ b/NativeBridgeMetalFrontend.mm
-diff --git a/NativeBridgeMetalFrontend.mm b/NativeBridgeMetalFrontend.mm
 index 7022116..e00ca5d 100644
 --- a/NativeBridgeMetalFrontend.mm
 +++ b/NativeBridgeMetalFrontend.mm
