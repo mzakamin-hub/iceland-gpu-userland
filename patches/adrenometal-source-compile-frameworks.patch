@@ -16,6 +16,7 @@ index c955d67..b6c3e42 100644
 + // frameworks for <Framework/Header.h> and Core Image's own headers directory, as MTLCompilerService finds them.
 + [arguments addObject:@"-F/System/Library/Frameworks"];
 + [arguments addObject:@"-I/System/Library/Frameworks/CoreImage.framework/Headers"];
+ [arguments addObject:@"-I/private/var/ngpu/ci-headers"];   /* w7-cam (18 Nov): CIKernelMetalLibPrivate.h carved from CoreImage's binary and installed by the add-on */
 + // The caller's own arguments where its options carry some (private SPI, asked first): its include paths and flags are what the
 + // kernels expect, and a client that sets none passes none.
 + for(NSString *name in @[@"additionalCompilerArguments",@"compilerArguments"]) {
