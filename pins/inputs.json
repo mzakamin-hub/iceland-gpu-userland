@@ -55,7 +55,7 @@
     "render_server_pacing": {
       "path": "patches/adrenometal-render-server-pacing.patch",
       "applies_to": "drivers/AdrenoMetal",
-      "sha256": "105eb954b4d844399083adcee1af8ead4209d24bf030e1de6d77e2caf4c72b64"
+      "sha256": "6bbf986eb8fc8d37e80c438b5be5b43fb493b379fccef8ca31ea1fb9aa593e2c"
     }
   },
   "mesa_patches": {

@@ -3,6 +3,9 @@
 # lives, a later writable view releases the cached hold and re-imports writable), tracked per import; an env escape
 # (NATIVE_METAL_RW_IMPORTS=1) forces the old always-writable behaviour. The gain class is WindowServer's import churn.
 # Ours, MIT as the file it patches; provenance: UniXNU/AdrenoMetal 6245fea. Applies after the dump patch on 8c7f950.
+diff --git a/NativeBridgeMetalFrontend.mm b/NativeBridgeMetalFrontend.mm
+--- a/NativeBridgeMetalFrontend.mm
++++ b/NativeBridgeMetalFrontend.mm
 @@ -37,6 +37,7 @@
  #include <mach-o/loader.h>
  #include <execinfo.h>
