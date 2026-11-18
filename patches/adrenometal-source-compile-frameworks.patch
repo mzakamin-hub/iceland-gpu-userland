@@ -1,14 +1,13 @@
-# AdrenoMetal: a runtime MSL compile (MTLDevice newLibraryWithSource:) gets the framework search paths and the caller's own compiler
-# arguments. A source that #includes a framework header was refused with "'CIKernelMetalLib.h' file not found" (Photo Booth's Core
-# Image kernels) because compileArguments() passed none; Metal's own compiler service passes the system frameworks and whatever the
-# options' private SPI carries, and this does too. The source-compile failure line now logs the whole diagnostic (2000 characters,
-# was 300) so a boot's log shows the message instead of its first line. Ours, MIT as the file it patches; applies unchanged to
-# AdrenoMetal main 8c7f950 (R2507, 17 Nov 2026), where compileArguments() still passes no framework paths.
+# AdrenoMetal: a runtime MSL compile (MTLDevice newLibraryWithSource:) gets the framework search paths, the caller's
+# arguments, and (18 Nov, r2507-pbfix) the add-on's carved Core Image private-header directory: CIKernelMetalLibPrivate.h
+# exists nowhere on macOS 27.3 as a file (its text is inside CoreImage's binary), so the add-on installs the carved text
+# under /private/var/ngpu/ci-headers and this adds that directory to the compile's search. Ours, MIT as the file it
+# patches; applies unchanged on AdrenoMetal main 8c7f950 (R2507).
 diff --git a/NativeBridgeMetalFrontend.mm b/NativeBridgeMetalFrontend.mm
-index c955d67..b6c3e42 100644
+index e9aceb2..7022116 100644
 --- a/NativeBridgeMetalFrontend.mm
 +++ b/NativeBridgeMetalFrontend.mm
-@@ -893,6 +893,19 @@ static NSString *compileArguments(MTLCompileOptions *options) {
+@@ -918,6 +918,20 @@ static NSString *compileArguments(MTLCompileOptions *options) {
    [arguments addObject:compileArgument([NSString stringWithFormat:@"-D%@=%@",name,value])];
   }];
   [arguments addObject:compileArgument([@"-fmodules-cache-path=" stringByAppendingString:[NSTemporaryDirectory() stringByAppendingPathComponent:@"m2v-msl"]])];
@@ -16,7 +15,7 @@ index c955d67..b6c3e42 100644
 + // frameworks for <Framework/Header.h> and Core Image's own headers directory, as MTLCompilerService finds them.
 + [arguments addObject:@"-F/System/Library/Frameworks"];
 + [arguments addObject:@"-I/System/Library/Frameworks/CoreImage.framework/Headers"];
- [arguments addObject:@"-I/private/var/ngpu/ci-headers"];   /* w7-cam (18 Nov): CIKernelMetalLibPrivate.h carved from CoreImage's binary and installed by the add-on */
+++[arguments addObject:@"-I/private/var/ngpu/ci-headers"];   /* w7-cam: CIKernelMetalLibPrivate.h carved from CoreImage's binary, installed by the add-on */
 + // The caller's own arguments where its options carry some (private SPI, asked first): its include paths and flags are what the
 + // kernels expect, and a client that sets none passes none.
 + for(NSString *name in @[@"additionalCompilerArguments",@"compilerArguments"]) {
@@ -29,7 +28,7 @@ index c955d67..b6c3e42 100644
   return [arguments componentsJoinedByString:@" "];
  }
  static NSError *nbError(NSString *why) {
-@@ -4568,7 +4581,7 @@ static void reportUnreadableLibrary(NSString *path) {
+@@ -4794,7 +4808,7 @@ static void reportUnreadableLibrary(NSString *path) {
   NSString *warnings=nil,*failure=nil;
   NSData *metallib=compileMetalSource(source,compileArguments(options),&warnings,&failure);
   if(!metallib) {
