@@ -5,7 +5,7 @@
     "repository": "https://github.com/UniXNU/UniXNU",
     "commit": "429d337ca53c8f88759710c4daf35bd6ff502f5f",
     "submodules": {
-      "drivers/AdrenoMetal": "8c7f9502de593c04a1003690f4a9441fe88551e8",
+      "drivers/AdrenoMetal": "cc0a4e8e57d20f4a4698753c2530875f2b10c0ca",
       "drivers/Adreno740": "1c9029bc3216a39d9e514ba41dee12e95e8f3598",
       "drivers/GopFramebuffer": "b0d812d578efa2acb005b66f73168891719af09a",
       "kits/AdrenoPM4": "282606b528b2595bc4274ea7490b62b323f35a5f",
@@ -56,6 +56,11 @@
       "path": "patches/adrenometal-render-server-pacing.patch",
       "applies_to": "drivers/AdrenoMetal",
       "sha256": "6bbf986eb8fc8d37e80c438b5be5b43fb493b379fccef8ca31ea1fb9aa593e2c"
+    },
+    "copies_unreachable_pages": {
+      "path": "patches/unixnu-bridge-lists-copied-buffer-guard.patch",
+      "applies_to": ".",
+      "sha256": "a0a99cca8022159536b5a658ceb6637229040777210e9857c10cfb0f345fdf71"
     }
   },
   "mesa_patches": {
