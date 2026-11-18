@@ -80,6 +80,15 @@ unixnu() {
         git -C "$UNIXNU" submodule update --init --depth 1 --filter=blob:none "$path"
         head="$(git -C "$UNIXNU/$path" rev-parse HEAD)"
         if [ "$head" != "$commit" ]; then
+            # r2507-gains: the pin may be ahead of the superproject's gitlink (drivers/AdrenoMetal
+            # cc0a4e8e carries the copied-buffer guard; UniXNU 429d337's gitlink stops at 8c7f950).
+            # Fetch the pinned commit in the submodule's own origin and detach to it.
+            echo "== $path: the gitlink is at $head, detaching to the pin $commit"
+            git -C "$UNIXNU/$path" -c protocol.version=2 fetch -q --depth 1 origin "$commit"
+            git -C "$UNIXNU/$path" checkout -q "$commit"
+            head="$(git -C "$UNIXNU/$path" rev-parse HEAD)"
+        fi
+        if [ "$head" != "$commit" ]; then
             echo "::error::$path is at $head, not the pinned $commit"
             exit 1
         fi
