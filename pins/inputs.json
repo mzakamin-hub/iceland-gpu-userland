@@ -52,11 +52,6 @@
       "applies_to": "drivers/AdrenoMetal",
       "sha256": "aa9e132c4ab41b18dd3c5ab2e4a009df2c67ef6796db74593affcf886e518c7a"
     },
-    "render_server_pacing": {
-      "path": "patches/adrenometal-render-server-pacing.patch",
-      "applies_to": "drivers/AdrenoMetal",
-      "sha256": "6bbf986eb8fc8d37e80c438b5be5b43fb493b379fccef8ca31ea1fb9aa593e2c"
-    },
     "copies_unreachable_pages": {
       "path": "patches/unixnu-bridge-lists-copied-buffer-guard.patch",
       "applies_to": ".",
