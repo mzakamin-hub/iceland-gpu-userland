@@ -1,41 +1,230 @@
 # AdrenoMetal: Core Image's runtime kernels include "CIKernelMetalLibPrivate.h", a header that exists nowhere on this
-# system as a file (its text lives inside CoreImage) and that Apple's in-process compiler does not resolve from the -I
-# paths the request carries: Photo Booth's compile died on exactly that with -I/private/var/ngpu/ci-headers in request 13
-# (cam15/cam15b, 19 Nov 2026). The add-on stages the carved header at /private/var/ngpu/ci-headers (icewl_hdr=1); when
-# that file is readable the include line is rewritten to its absolute path in the source compileMetalSource hands the
-# compiler, so the compiler needs no search path at all. Without the file the source is unchanged, so other boots keep
-# today's behaviour. cam16 (19 Nov) showed the rewrite stays dormant for Photo Booth itself: the app runs under the app
-# sandbox, so the in-process access() to /private/var/ngpu is denied and the compile answers the original 'file not
-# found'; the mechanism stands for any client that can read the staged path. One hunk, inside compileMetalSource below
-# the tessellation dump, far from the frameworks patch's hunks, so verify-pins' reverse checks pass in every order.
-# Ours, MIT as the file it patches; applies after adrenometal-source-compile-frameworks.patch, on AdrenoMetal cc0a4e8e
-# (R2507, the compile-options-dump patch dropped from the series 19 Nov: symbolication cleared it - the crash line's
-# pc is the universal abort site ___pthread_kill+8, ESR 0x56000080 is the svc #0x80 syscall entry, not a tag check).
+# system as a file (its text lives inside CoreImage). The v1 of this patch rewrote the include to the staged copy's
+# absolute path: the cam15/cam15b boots proved Apple's in-process codegen does not resolve the -I route, and cam16
+# (19 Nov) proved the file route is doubly dead - Photo Booth runs under the app sandbox (libsystem_secinit AppSandbox),
+# which denies even access() on /private/var/ngpu/ci-headers, so the rewrite never fired and the compile answered the
+# original 'CIKernelMetalLibPrivate.h' file not found. v2 needs no filesystem at all: the carved header (7,593 B, the
+# 18-Nov carve of the text inside CoreImage, byte-for-byte) is embedded as a string constant, and the include line is
+# replaced IN THE SOURCE with that text - a pure string rewrite nothing can block. The embedded text carries a leading
+# __BUILDING_RUNTIME_COMPILE_HEADER__ define, the runtime-compile context Apple's own guard names, so the header skips
+# its include of the equally file-less <CoreImage/CIKernelMetalLib.h>; its one remaining include,
+# <TargetConditionals.h>, must resolve like any Metal source's would (the embedded text uses nothing from it).
+# Known-late risk: the runtime prototypes the text declares (sampler_h etc.) may need the public header's own
+# declarations; if so the compile's next diagnostic will say so and the public text gets carved and embedded the same
+# way. The staging route stays for the record (icewl_hdr=1) but nothing depends on it now. One hunk pair at the same
+# site as v1, far from the frameworks patch's hunks, so verify-pins' reverse checks pass in every order. Ours, MIT as
+# the file it patches; applies after adrenometal-source-compile-frameworks.patch, on AdrenoMetal cc0a4e8e (R2507).
 diff --git a/NativeBridgeMetalFrontend.mm b/NativeBridgeMetalFrontend.mm
-index c91593e..c080181 100644
+index c91593e..8a6ce9d 100644
 --- a/NativeBridgeMetalFrontend.mm
 +++ b/NativeBridgeMetalFrontend.mm
-@@ -871,6 +871,24 @@ static void dumpText(NSString *text) {NSData *bytes=[text dataUsingEncoding:NSUT
+@@ -868,9 +868,210 @@ static NSData *codeGenRequest(uint32_t type,const std::vector<uint8_t> &request,
+ // pipeline's tessellation state and vertex inputs (what an app's tessellation asks of the bridge).
+ static const bool gDumpTessellation=getenv("NATIVE_METAL_DUMP_TESS")!=nullptr;
+ static void dumpText(NSString *text) {NSData *bytes=[text dataUsingEncoding:NSUTF8StringEncoding];(void)!write(2,bytes.bytes,bytes.length);}
++// Core Image's runtime compile header (CIKernelMetalLibPrivate.h, 7593 B, the 18-Nov carve of the text that lives inside
++// CoreImage on real macOS - no file route can provide it: it exists nowhere on this system as a file, the in-process
++// codegen request does not resolve it from the -I paths it carries, and cam16 (19 Nov) showed a sandboxed client (Photo
++// Booth) cannot even access() the staged /private/var/ngpu/ci-headers copy, so the v1 path-rewrite never fired. v2 needs
++// no filesystem at all: the carved text is embedded verbatim below, and the include line is replaced in the source with
++// this text. The leading __BUILDING_RUNTIME_COMPILE_HEADER__ define is the runtime-compile context Apple's own guard
++// names, so the embedded header skips its include of the equally file-less <CoreImage/CIKernelMetalLib.h>.
++static const char gCIKernelRuntimeHeader[] =
++"#define __BUILDING_RUNTIME_COMPILE_HEADER__ 1\n"
++R"ICELANDHDR(//
++//  Private extensions to Metal Shading Language for Core Image Kernels
++//
++//  Copyright (c) 2017 Apple, Inc. All rights reserved.
++//
++#ifndef CIKERNELMETALLIBPRIVATE_H
++#define CIKERNELMETALLIBPRIVATE_H
++#if __METAL_VERSION__
++#ifndef __BUILDING_RUNTIME_COMPILE_HEADER__
++#include <CoreImage/CIKernelMetalLib.h>
++#endif //__BUILDING_RUNTIME_COMPILE_HEADER__
++#include <TargetConditionals.h>
++#if _BUILDING_CI_STDLIB_STITCHABLE_
++#define FUNCTION_ATTRIBUTES [[stitchable]]
++#elif _BUILDING_FOR_UBER_SHADER_
++#define FUNCTION_ATTRIBUTES inline
++#else
++#define FUNCTION_ATTRIBUTES
++#endif
++namespace coreimage
++{
++    using namespace metal;
++    // Data types from GLSL-based CIKernel Language, to facilitate porting of non-Metal legacy CI kernels.
++#if _CI_HALF_COLOR_
++    typedef half2 vec2;
++    typedef half3 vec3;
++    typedef half4 vec4;
++#else
++    typedef float2 vec2;
++    typedef float3 vec3;
++    typedef float4 vec4;
++#endif
++    typedef float2x2 mat2;
++    typedef float3x3 mat3;
++    typedef float4x4 mat4;
++    typedef vec4 __sample;
++    typedef vec4 __color;
++    typedef texture2d<float, access::sample> sampler2D;
++    typedef texture2d<half, access::sample> hsampler2D;
++    static float4 texture2D (sampler2D t, float2 p)
++    {
++        constexpr metal::sampler s(coord::normalized, filter::linear);
++        return t.sample(s, p);
++    }
++    static half4 texture2D (hsampler2D t, float2 p)
++    {
++        constexpr metal::sampler s(coord::normalized, filter::linear);
++        return t.sample(s, p);
++    }
++    namespace priv
++    {
++        //MARK: - Destination
++        // This private version should be kept in-sync w/ the public version in CIKernelMetalLib.h.
++        typedef struct
++        #if __CIKERNEL_METAL_VERSION__ >= 300
++        Destination
++        #endif
++        {
++            #if __CIKERNEL_METAL_VERSION__ >= 300
++            Destination(float2 c_, uint2 gid, float4 extent, float4x4 transform, 
++                        texture2d<float, access::write> texture, 
++                        texture2d<float, access::write> texturePlane) thread
++                : c(c_), _gid(gid), _extent(extent), _transform(transform), _texture(texture), _texturePlane(texturePlane) {}
++            #endif
++            // Returns the position, in working space coordinates, of the pixel currently being computed.
++            // The destination space refers to the coordinate space of the image you are rendering.
++            inline float2 coord() const thread { return c; }
++            uint2 gid(int2 offset = int2(0)) const thread;
++            inline uint2 gid(int dx, int dy) const thread { return gid(int2(dx,dy)); }
++            inline float4 extent() const thread { return _extent; }
++            inline float2 origin() const thread { return extent().xy; }
++            inline float2 size() const thread { return extent().zw; }
++            inline void write(float4 v, float2 p) thread
++            {
++                _texture.write(v, static_cast<uint2>(p));
++            }
++            inline void writePlane(float4 v, float2 p) thread
++            {
++                _texturePlane.write(v, static_cast<uint2>(p));
++            }
++            inline void write(int r, int g, int b, int a, float2 p) thread
++            {
++                _texture.write(float4(r,g,b,a) / 255.0, static_cast<uint2>(p));
++            }
++        private:
++            float2 c;
++            uint2 _gid;
++            float4 _extent;
++            float4x4 _transform;
++            texture2d<float, access::write> _texture;
++            texture2d<float, access::write> _texturePlane;
++        } destination;
++        typedef struct
++        #if __CIKERNEL_METAL_VERSION__ >= 300
++        Destination_h
++        #endif
++        {
++            #if __CIKERNEL_METAL_VERSION__ >= 300
++            Destination_h(float2 c_, uint2 gid, float4 extent, float4x4 transform, 
++                          texture2d<half, access::write> texture, 
++                          texture2d<half, access::write> texturePlane) thread
++                 : c(c_), _gid(gid), _extent(extent), _transform(transform), _texture(texture), _texturePlane(texturePlane) {}
++            #endif
++            // Returns the position, in working space coordinates, of the pixel currently being computed.
++            // The destination space refers to the coordinate space of the image you are rendering.
++            inline float2 coord() const thread { return c; }
++            uint2 gid(int2 offset = int2(0)) const thread;
++            inline uint2 gid(int dx, int dy) const thread { return gid(int2(dx,dy)); }
++            inline float4 extent() const thread { return _extent; }
++            inline float2 origin() const thread { return extent().xy; }
++            inline float2 size() const thread { return extent().zw; }
++            inline void write(half4 v, float2 p) thread
++            {
++                _texture.write(v, static_cast<uint2>(p));
++            }
++            inline uint writeWidth() thread
++            {
++                return _texture.get_width();
++            }
++            inline uint writeHeight() thread
++            {
++                return _texture.get_height();
++            }
++            inline void writePlane(half4 v, float2 p) thread
++            {
++                _texturePlane.write(v, static_cast<uint2>(p));
++            }
++            inline void write(int r, int g, int b, int a, float2 p) thread
++            {
++                _texture.write(half4(r,g,b,a) / 255.0, static_cast<uint2>(p));
++            }
++        private:
++            float2 c;
++            uint2 _gid;
++            float4 _extent;
++            float4x4 _transform;
++            texture2d<half, access::write> _texture;
++            texture2d<half, access::write> _texturePlane;
++        } destination_h;
++    }
++    float4 texture2D (sampler2D t, float2 p);
++#ifdef __CIKERNEL_METAL_SUPPORTS_HALF__
++    half4 sample (sampler_h src, float2 p);
++    float2 samplerTransform (sampler_h src, float2 p);
++    float2 samplerCoord (sampler_h src);
++    float4 samplerExtent (sampler_h src);
++    float2 samplerOrigin (sampler_h src);
++    float2 samplerSize (sampler_h src);
++#endif
++#ifdef __CIKERNEL_METAL_SUPPORTS_GATHER__
++    float4 gatherX (sampler src, float2 p);
++    float4 gatherY (sampler src, float2 p);
++    float4 gatherZ (sampler src, float2 p);
++    float4 gatherW (sampler src, float2 p);
++    float4 _unordered_gatherX (sampler src, float2 p);
++    float4 _unordered_gatherY (sampler src, float2 p);
++    float4 _unordered_gatherZ (sampler src, float2 p);
++    float4 _unordered_gatherW (sampler src, float2 p);
++#endif
++#if __CIKERNEL_METAL_VERSION__ >= 300
++    coreimage::group::destination   group::make_destination(float2 c, uint2 gid, float4 r, float4x4 m, metal::texture2d<float, access::write> t );
++    coreimage::group::destination_h group::make_destination(float2 c, uint2 gid, float4 r, float4x4 m, metal::texture2d<half,  access::write> t );
++    coreimage::sampler_h make_sampler(texture2d<half,  access::sample> t, metal::sampler s, constant float4x4& m, float2 dc );
++    coreimage::sampler   make_sampler(texture2d<float, access::sample> t, metal::sampler s, constant float4x4& m, float2 dc );
++#endif //__CIKERNEL_METAL_VERSION__ >= 300
++}
++#define mod(x,y) ((x) - (y) * floor((x)/(y))) // GLSL defines mod() differently than Metal's fmod()
++#define inversesqrt(x) rsqrt(x)
++#define lessThan(a,b) (1.0 - step(b,a))
++float atan (float x, float y); // overload of Metal's atan(y_over_x)
++#define destCoord() _dc
++#define writeCoord() static_cast<float2>(_dst.gid())
++#define writeImage(c,p) _dst.write(c,p)
++#define writeImagePlane(c,p) _dst.writePlane(c,p)
++#endif /* __METAL_VERSION__ */
++#endif /* CIKERNELMETALLIBPRIVATE_H */)ICELANDHDR";
++static NSString *gCIKernelRuntimeHeaderText(void) {static NSString *text=[NSString stringWithUTF8String:gCIKernelRuntimeHeader];return text;}
  static NSData *compileMetalSource(NSString *source,NSString *arguments,NSString **warnings,NSString **failure) {
   if(gDumpTessellation && [source containsString:@"[[patch"])
    dumpText([NSString stringWithFormat:@"\n=== native-metal tessellation source (options %@) ===\n%@\n=== end ===\n",arguments,source]);
-+ // Core Image's runtime kernels include "CIKernelMetalLibPrivate.h": a header that exists nowhere on this system as a file (its
-+ // text lives inside CoreImage) and that Apple's in-process compiler does not resolve from the -I paths the request carries (the
-+ // cam15b request held -I/private/var/ngpu/ci-headers and the compile still answered 'file not found'). When the add-on has
-+ // staged the carved header there (icewl_hdr=1) and this process can read it, the include is rewritten to that absolute path in
-+ // the source the request carries, so the compiler needs no search path at all; without the file the source is unchanged.
-+ if(!access("/private/var/ngpu/ci-headers/CIKernelMetalLibPrivate.h",R_OK)) {
-+  NSString *absolute=@"#include \"/private/var/ngpu/ci-headers/CIKernelMetalLibPrivate.h\"";
-+  NSMutableString *spliced=nil;
-+  for(NSString *directive in @[@"#include \"CIKernelMetalLibPrivate.h\"",@"#include <CIKernelMetalLibPrivate.h>"]) {
-+   if([source rangeOfString:directive].location==NSNotFound)continue;
-+   if(!spliced)spliced=[source mutableCopy];
-+   [spliced replaceOccurrencesOfString:directive withString:absolute options:NSLiteralSearch range:NSMakeRange(0,spliced.length)];
-+  }
-+  if(spliced) {
-+   NBLOG(@"native-metal: spliced the Core Image runtime header include into the source (%lu -> %lu B)",(unsigned long)source.length,(unsigned long)spliced.length);
-+   source=spliced;
-+  }
++ // Core Image's runtime kernels include "CIKernelMetalLibPrivate.h": the header exists nowhere on this system as a file
++ // (its text lives inside CoreImage) and no route can feed it to Apple's in-process compiler - not the request's -I paths
++ // (cam15/cam15b), not the staged file (cam16: Photo Booth runs under the app sandbox, which denies even access() on
++ // /private/var/ngpu/ci-headers). So the include line is replaced IN THE SOURCE by the embedded header text: a pure
++ // string rewrite, no filesystem, no search path, nothing a sandbox can block. The v1 path-rewrite is gone with it.
++ NSMutableString *inlined=nil;
++ for(NSString *directive in @[@"#include \"CIKernelMetalLibPrivate.h\"",@"#include <CIKernelMetalLibPrivate.h>"]) {
++  if([source rangeOfString:directive].location==NSNotFound)continue;
++  if(!inlined)inlined=[source mutableCopy];
++  [inlined replaceOccurrencesOfString:directive withString:gCIKernelRuntimeHeaderText() options:NSLiteralSearch range:NSMakeRange(0,inlined.length)];
++ }
++ if(inlined) {
++  NBLOG(@"native-metal: inlined the Core Image runtime header into the source (%lu -> %lu B)",(unsigned long)source.length,(unsigned long)inlined.length);
++  source=inlined;
 + }
   NSData *text=[source dataUsingEncoding:NSUTF8StringEncoding];
   const char *options=arguments.UTF8String;
