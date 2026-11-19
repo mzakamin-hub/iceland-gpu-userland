@@ -56,6 +56,11 @@
       "path": "patches/unixnu-bridge-lists-copied-buffer-guard.patch",
       "applies_to": ".",
       "sha256": "a0a99cca8022159536b5a658ceb6637229040777210e9857c10cfb0f345fdf71"
+    },
+    "source_include_splice": {
+      "path": "patches/adrenometal-source-include-splice.patch",
+      "applies_to": "drivers/AdrenoMetal",
+      "sha256": "38dc58cc4956b32ce612ff314d1b232ad383d7f120cb4a92a925d605d99166fb"
     }
   },
   "mesa_patches": {
