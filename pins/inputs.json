@@ -47,11 +47,6 @@
       "applies_to": "drivers/AdrenoMetal",
       "sha256": "c7401244bd5be9042b2248a220a229822b154c9e55da453f926a6846b7719898"
     },
-    "compile_options_dump": {
-      "path": "patches/adrenometal-compile-options-dump.patch",
-      "applies_to": "drivers/AdrenoMetal",
-      "sha256": "aa9e132c4ab41b18dd3c5ab2e4a009df2c67ef6796db74593affcf886e518c7a"
-    },
     "copies_unreachable_pages": {
       "path": "patches/unixnu-bridge-lists-copied-buffer-guard.patch",
       "applies_to": ".",
@@ -60,7 +55,7 @@
     "source_include_splice": {
       "path": "patches/adrenometal-source-include-splice.patch",
       "applies_to": "drivers/AdrenoMetal",
-      "sha256": "38dc58cc4956b32ce612ff314d1b232ad383d7f120cb4a92a925d605d99166fb"
+      "sha256": "f05d52f5e987b16510aa1bf07ceb33c769f292097f09ef785e29a0d60eb69bd9"
     }
   },
   "mesa_patches": {

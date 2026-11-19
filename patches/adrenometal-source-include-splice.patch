@@ -4,14 +4,18 @@
 # (cam15/cam15b, 19 Nov 2026). The add-on stages the carved header at /private/var/ngpu/ci-headers (icewl_hdr=1); when
 # that file is readable the include line is rewritten to its absolute path in the source compileMetalSource hands the
 # compiler, so the compiler needs no search path at all. Without the file the source is unchanged, so other boots keep
-# today's behaviour. One hunk, inside compileMetalSource below the tessellation dump, far from the frameworks and
-# options-dump patches' hunks, so verify-pins' reverse checks pass in every order. Ours, MIT as the file it patches;
-# applies last, after adrenometal-compile-options-dump.patch, on AdrenoMetal cc0a4e8e (R2507).
+# today's behaviour. cam16 (19 Nov) showed the rewrite stays dormant for Photo Booth itself: the app runs under the app
+# sandbox, so the in-process access() to /private/var/ngpu is denied and the compile answers the original 'file not
+# found'; the mechanism stands for any client that can read the staged path. One hunk, inside compileMetalSource below
+# the tessellation dump, far from the frameworks patch's hunks, so verify-pins' reverse checks pass in every order.
+# Ours, MIT as the file it patches; applies after adrenometal-source-compile-frameworks.patch, on AdrenoMetal cc0a4e8e
+# (R2507, the compile-options-dump patch dropped from the series 19 Nov: symbolication cleared it - the crash line's
+# pc is the universal abort site ___pthread_kill+8, ESR 0x56000080 is the svc #0x80 syscall entry, not a tag check).
 diff --git a/NativeBridgeMetalFrontend.mm b/NativeBridgeMetalFrontend.mm
-index 5679efb..3f86df5 100644
+index c91593e..c080181 100644
 --- a/NativeBridgeMetalFrontend.mm
 +++ b/NativeBridgeMetalFrontend.mm
-@@ -896,6 +896,24 @@ static id gLastCompileOptions;
+@@ -871,6 +871,24 @@ static void dumpText(NSString *text) {NSData *bytes=[text dataUsingEncoding:NSUT
  static NSData *compileMetalSource(NSString *source,NSString *arguments,NSString **warnings,NSString **failure) {
   if(gDumpTessellation && [source containsString:@"[[patch"])
    dumpText([NSString stringWithFormat:@"\n=== native-metal tessellation source (options %@) ===\n%@\n=== end ===\n",arguments,source]);
