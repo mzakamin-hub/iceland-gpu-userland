@@ -60,7 +60,7 @@
     "surface_import_retry": {
       "path": "patches/adrenometal-surface-import-retry.patch",
       "applies_to": "drivers/AdrenoMetal",
-      "sha256": "93781e2257e1ac4e50566aae550c0ee6a599691e0ed5edddb5c9111f75896f45"
+      "sha256": "ca58955bfaa4d3682e168e71763e3eefc67021e455fab9a2372439044e083ec8"
     }
   },
   "mesa_patches": {
