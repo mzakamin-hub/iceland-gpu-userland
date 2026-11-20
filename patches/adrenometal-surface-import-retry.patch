@@ -1,8 +1,8 @@
 diff --git a/NativeBridgeMetalFrontend.mm b/NativeBridgeMetalFrontend.mm
-index 8a6ce9d..d1b70a6 100644
+index 8a6ce9d..544fd80 100644
 --- a/NativeBridgeMetalFrontend.mm
 +++ b/NativeBridgeMetalFrontend.mm
-@@ -1445,7 +1445,18 @@ static void holdImport(uint64_t identity,uint64_t address,uint64_t bytes,NBBuffe
+@@ -1445,7 +1445,52 @@ static void holdImport(uint64_t identity,uint64_t address,uint64_t bytes,NBBuffe
   pruneHeldImports(false,gone);
   gHeldImports[{identity,address,bytes}]={buffer,buffer.importedSurface};
  }
@@ -17,12 +17,46 @@ index 8a6ce9d..d1b70a6 100644
 +// imports refused all the same.
 +static std::atomic<uint64_t> gImportRetries[3];
 +static bool refusedForMemory() {const char *error=nmb_last_error();return error && strstr(error,"OutOfMemory");}
++// Turnip's refusals for memory (tu_darwin_refusal_stats, the mesa-iceland-6 rider): [0] no free range in the process's GPU window,
++// [1] the kernel refused the mapping (BoMap: its page tables or span capacity), [2] Turnip's heap accounting (heap.size is capped at the
++// window), then [3] the kind of the last refusal on the calling thread plus one (0: none since its last host import began), cleared by
++// the read. Zeros until the runtime has loaded Turnip.
++static void turnipRefusals(uint64_t out[4]) {
++ typedef void (*Stats)(uint64_t *);
++ static std::atomic<Stats> stats{nullptr};
++ out[0]=out[1]=out[2]=out[3]=0;
++ Stats fn=stats.load();
++ if(!fn) {
++  if(gLoaderPath.empty())return;
++  void *turnip=dlopen(gLoaderPath.c_str(),RTLD_NOW|RTLD_NOLOAD);
++  if(!turnip)return;
++  fn=(Stats)dlsym(turnip,"tu_darwin_refusal_stats");
++  dlclose(turnip);
++  if(!fn)return;
++  stats.store(fn);
++ }
++ fn(out);
++}
++// The import refusals for memory by the path that refused: [0] va, [1] map, [2] heap (Turnip's), [3] other (Turnip refused nothing: the
++// runtime's own limit). One log line per kind each time its count reaches a power of two, so a burst costs a handful of lines.
++static std::atomic<uint64_t> gImportRefusedBy[4];
++static void noteImportRefusal() {
++ uint64_t tu[4];turnipRefusals(tu);
++ const unsigned kind=tu[3]>=1 && tu[3]<=3?(unsigned)tu[3]-1:3;
++ const uint64_t n=++gImportRefusedBy[kind];
++ if(n&(n-1))return;
++ static const char *const names[4]={"va","map","heap","other"};
++ NBLOG(@"native-metal: surface import refused by %s, %llu so far (va %llu map %llu heap %llu other %llu; Turnip va %llu map %llu heap %llu)",
++  names[kind],(unsigned long long)n,(unsigned long long)gImportRefusedBy[0].load(),(unsigned long long)gImportRefusedBy[1].load(),
++  (unsigned long long)gImportRefusedBy[2].load(),(unsigned long long)gImportRefusedBy[3].load(),(unsigned long long)tu[0],
++  (unsigned long long)tu[1],(unsigned long long)tu[2]);
++}
 +static NBBuffer *surfaceBufferOnce(IOSurfaceRef surface,void *base,size_t bytes,bool lastTry,bool *memory) {
 + *memory=false;
   struct Key {uint64_t identity,address,bytes;};
   const Key value={IOSurfaceGetID(surface),(uintptr_t)base,bytes};
   NSValue *key=value.identity?[NSValue valueWithBytes:&value objCType:@encode(Key)]:nil;
-@@ -1457,7 +1468,11 @@ static NBBuffer *surfaceBuffer(IOSurfaceRef surface,void *base,size_t bytes) {
+@@ -1457,7 +1502,11 @@ static NBBuffer *surfaceBuffer(IOSurfaceRef surface,void *base,size_t bytes) {
   if(buffer){if(key)holdImport(value.identity,value.address,value.bytes,buffer,gone);return buffer;}
   // The surface keeps its CPU mapping (the imported pages) until the import is freed.
   NmbBuffer *handle=nmb_buffer_new_no_copy_releasing(gDevice,base,bytes,MTLResourceStorageModeShared,releaseSurface,(void *)CFRetain(surface));
@@ -35,25 +69,29 @@ index 8a6ce9d..d1b70a6 100644
   gSurfaceImportsMade++;buffer=[NBBuffer new];buffer.handle=handle;buffer.options=MTLResourceStorageModeShared;buffer.importedSurface=surface;
   if(key) {
    // Associations whose import is gone are pruned whenever the table has doubled since the last pruning; a live one is never evicted.
-@@ -1471,6 +1486,17 @@ static NBBuffer *surfaceBuffer(IOSurfaceRef surface,void *base,size_t bytes) {
+@@ -1471,6 +1520,21 @@ static NBBuffer *surfaceBuffer(IOSurfaceRef surface,void *base,size_t bytes) {
   }
   return buffer;
  }
 +static NBBuffer *surfaceBuffer(IOSurfaceRef surface,void *base,size_t bytes) {
 + bool memory=false;
 + NBBuffer *buffer=surfaceBufferOnce(surface,base,bytes,false,&memory);
++ if(!buffer && memory)noteImportRefusal();
 + for(int pass=0;!buffer && memory && pass<2;pass++) {
 +  trimHeldImports(pass==1);
 +  buffer=surfaceBufferOnce(surface,base,bytes,pass==1,&memory);
 +  if(buffer)gImportRetries[pass]++;
-+  else if(pass==1 || !memory)gImportRetries[2]++;
++  else {
++   if(memory)noteImportRefusal();
++   if(pass==1 || !memory)gImportRetries[2]++;
++  }
 + }
 + return buffer;
 +}
  // PVRTC (PowerVR's compressed formats, MTLPixelFormatPVRTC_* 160-167) has no Vulkan format on Adreno, and metal2vulkan keeps such a
  // texture's blocks for copies only: every command that samples it is refused (GFXBench's T-Rex drew nothing, half its command
  // buffers refused). So a PVRTC texture is made RGBA8 (sRGB for the sRGB formats), still answers its own pixelFormat, and its blocks
-@@ -5955,14 +5981,16 @@ extern "C" size_t native_bridge_metal_telemetry(char *out,size_t size) {
+@@ -5955,14 +6019,22 @@ extern "C" size_t native_bridge_metal_telemetry(char *out,size_t size) {
     }
    }
    // The system's memory pressure events this process got (warnings, critical ones) and the blocks the runtime gave back at them;
@@ -61,7 +99,8 @@ index 8a6ce9d..d1b70a6 100644
 -  // cache (at its own pressure events and when an allocation failed).
 +  // then the surface imports held between frames and their MiB, which go back at such an event, the refused imports tried again (ir:
 +  // made after the first trim, after the second, refused all the same; surfaceBuffer), and how often Turnip emptied its BO cache (at
-+  // its own pressure events and when an allocation or a host import failed).
++  // its own pressure events and when an allocation or a host import failed). Then, once an import was refused for memory, the IR row:
++  // those refusals by the path that refused (va, map, heap, other) and Turnip's own refusal counts by kind (every BO, not only imports).
    {
     uint64_t held=0,heldBytes=0;
     {std::lock_guard<std::mutex> lock(gSurfaceImportLock);
@@ -71,6 +110,11 @@ index 8a6ce9d..d1b70a6 100644
 +   row("PE warn %llu crit %llu freed %llu | imports held %llu %lluM ir %llu/%llu/%llu | tuc flush %llu",(ull)gPressureEvents[0].load(),
 +    (ull)gPressureEvents[1].load(),(ull)gPressureEvents[2].load(),(ull)held,(ull)(heldBytes>>20),(ull)gImportRetries[0].load(),
 +    (ull)gImportRetries[1].load(),(ull)gImportRetries[2].load(),(ull)bc[4]);
++   uint64_t tu[4];turnipRefusals(tu);
++   if(gImportRefusedBy[0].load() || gImportRefusedBy[1].load() || gImportRefusedBy[2].load() || gImportRefusedBy[3].load() ||
++      tu[0] || tu[1] || tu[2])
++    row("IR va %llu map %llu heap %llu other %llu | tu va %llu map %llu heap %llu",(ull)gImportRefusedBy[0].load(),
++     (ull)gImportRefusedBy[1].load(),(ull)gImportRefusedBy[2].load(),(ull)gImportRefusedBy[3].load(),(ull)tu[0],(ull)tu[1],(ull)tu[2]);
    }
    // Two-plane YCbCr surface textures (video frames; bridge patch 0035): made over their planes alone and made with a converted
    // image, images made later at a slot binding that could not read the planes in place, textures another call made whole, the

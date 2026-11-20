@@ -60,7 +60,7 @@
     "surface_import_retry": {
       "path": "patches/adrenometal-surface-import-retry.patch",
       "applies_to": "drivers/AdrenoMetal",
-      "sha256": "8d327b3c2b63274119416e9d84dc29e2616408a6c228200081c5ef9d24c6d7b0"
+      "sha256": "93781e2257e1ac4e50566aae550c0ee6a599691e0ed5edddb5c9111f75896f45"
     }
   },
   "mesa_patches": {
@@ -78,7 +78,7 @@
     },
     "mesa_iceland_6": {
       "path": "patches/mesa-iceland-6-host-import-flush-retry.patch",
-      "sha256": "3c8e3f14900c75e0a5ed91f3b808d86b0469a501037bdf7f1325cf016eae0be1"
+      "sha256": "fe9cc76431ffe900789f6b5407f0383eb50ba93642a96ec788cd14592c47941f"
     }
   },
   "shader_check": {

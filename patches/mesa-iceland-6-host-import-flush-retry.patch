@@ -1,8 +1,109 @@
+diff --git a/src/freedreno/vulkan/tu_device.cc b/src/freedreno/vulkan/tu_device.cc
+index 527a4d4..3221e6c 100644
+--- a/src/freedreno/vulkan/tu_device.cc
++++ b/src/freedreno/vulkan/tu_device.cc
+@@ -3509,6 +3509,9 @@ vkGetInstanceProcAddr(VkInstance instance, const char *pName)
+ }
+ #endif
+ 
++#ifdef TU_HAS_DARWIN
++extern "C" void tu_darwin_note_refusal(unsigned kind, uint64_t size, uint64_t a, uint64_t b);   /* tu_knl_darwin.cc */
++#endif
+ static VkResult
+ tu_add_to_heap(struct tu_device *dev, struct tu_bo *bo)
+ {
+@@ -3516,6 +3519,9 @@ tu_add_to_heap(struct tu_device *dev, struct tu_bo *bo)
+    uint64_t mem_heap_used = p_atomic_add_return(&mem_heap->used, bo->size);
+    if (mem_heap_used > mem_heap->size) {
+       p_atomic_add(&mem_heap->used, -bo->size);
++#ifdef TU_HAS_DARWIN
++      tu_darwin_note_refusal(2, bo->size, mem_heap_used - bo->size, mem_heap->size);
++#endif
+       tu_bo_finish(dev, bo);
+       return vk_errorf(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY,
+                        "Out of heap memory");
 diff --git a/src/freedreno/vulkan/tu_knl_darwin.cc b/src/freedreno/vulkan/tu_knl_darwin.cc
-index 79eaa44..0283a1b 100644
+index 79eaa44..3ae5731 100644
 --- a/src/freedreno/vulkan/tu_knl_darwin.cc
 +++ b/src/freedreno/vulkan/tu_knl_darwin.cc
-@@ -1009,6 +1009,17 @@ darwin_bo_init_host(struct tu_device *dev, struct tu_bo **out_bo, void *pointer,
+@@ -17,6 +17,7 @@
+ #include <TargetConditionals.h>
+ #include <dispatch/dispatch.h>
+ #include <mach/mach.h>
++#include <os/log.h>
+ 
+ #include "NativeAdrenoABI.h"
+ 
+@@ -827,10 +828,53 @@ darwin_collect_retired(struct tu_device *dev, bool opportunistic)
+    return result;
+ }
+ 
++/* Why a GPU memory request was refused (iceland gains1): [0] va, no free range in the process's GPU window (darwin_allocate_iova);
++ * [1] map, the kernel refused the mapping (BoMap: its tables or its span capacity, darwin_map_failure); [2] heap, Turnip's heap
++ * accounting (tu_add_to_heap; the heap is capped at the window). One unified-log line per kind each time its count reaches a power of
++ * two. The counts and the calling thread's last refused kind (plus one; cleared when it is read and when a host import begins) are
++ * exported for the Metal plugin, which tells by them which path refused its surface import (tu_darwin_refusal_stats). */
++static uint64_t darwin_refusals[3];
++static thread_local unsigned darwin_last_refusal;
++extern "C" __attribute__((visibility("default"))) void tu_darwin_refusal_stats(uint64_t out[4]);
++extern "C" __attribute__((visibility("default"))) void
++tu_darwin_refusal_stats(uint64_t out[4])
++{
++   for (unsigned i = 0; i < 3; ++i)
++      out[i] = p_atomic_read(&darwin_refusals[i]);
++   out[3] = darwin_last_refusal;
++   darwin_last_refusal = 0;
++}
++extern "C" void tu_darwin_note_refusal(unsigned kind, uint64_t size, uint64_t a, uint64_t b);
++extern "C" void
++tu_darwin_note_refusal(unsigned kind, uint64_t size, uint64_t a, uint64_t b)
++{
++   static const char *const names[3] = {"va (no GPU range; used, window)", "map (BoMap refused; kr, iova)",
++                                        "heap (heap accounting; used, size)"};
++   if (kind > 2)
++      return;
++   darwin_last_refusal = kind + 1;
++   const uint64_t n = p_atomic_inc_return(&darwin_refusals[kind]);
++   if (n & (n - 1))
++      return;
++   os_log(OS_LOG_DEFAULT, "NativeAdreno refused %{public}s: %llu so far (va %llu map %llu heap %llu), %llu B, %#llx %#llx",
++          names[kind], (unsigned long long)n, (unsigned long long)p_atomic_read(&darwin_refusals[0]),
++          (unsigned long long)p_atomic_read(&darwin_refusals[1]), (unsigned long long)p_atomic_read(&darwin_refusals[2]),
++          (unsigned long long)size, (unsigned long long)a, (unsigned long long)b);
++}
++static void
++darwin_note_va_refusal(struct tu_device *dev, uint64_t size)
++{
++   pthread_mutex_lock(&darwin_process_va_lock);
++   const uint64_t used = darwin_process_va.used;
++   pthread_mutex_unlock(&darwin_process_va_lock);
++   tu_darwin_note_refusal(0, size, used, dev->physical_device->va_size);
++}
++
+ static VkResult
+ darwin_map_failure(struct tu_device *dev, uint64_t handle, uint64_t iova,
+                    uint64_t size, kern_return_t map_error, bool own_iova = true)
+ {
++   tu_darwin_note_refusal(1, size, (uint64_t)(uint32_t)map_error, iova);
+    NativeAdrenoAbiBoFree release = {.handle = handle};
+    kern_return_t cleanup = dw_call(NativeAdrenoMethodBoFree, &release, sizeof(release), NULL, 0);
+    if (cleanup == KERN_SUCCESS) {
+@@ -921,6 +965,8 @@ darwin_bo_init(struct tu_device *dev, struct vk_object_base *base,
+          if (any)
+             continue;
+       }
++      if (result == VK_ERROR_OUT_OF_DEVICE_MEMORY)
++         darwin_note_va_refusal(dev, alloc_size);
+       if (result != VK_SUCCESS)
+          return result;
+ 
+@@ -1004,11 +1050,25 @@ darwin_bo_init_host(struct tu_device *dev, struct tu_bo **out_bo, void *pointer,
+ {
+    if (!(dw.params.flags & NativeAdrenoParamsHostImport))
+       return vk_error(dev, VK_ERROR_INVALID_EXTERNAL_HANDLE);
++   darwin_last_refusal = 0;   /* this import's refusal, if any, is the one the caller reads */
+    VkResult collected = darwin_collect_retired(dev);
+    if (collected != VK_SUCCESS)
        return collected;
     uint64_t iova;
     VkResult result = darwin_allocate_iova(dev, size, 0, TU_BO_ALLOC_NO_FLAGS, &iova);
@@ -16,6 +117,8 @@ index 79eaa44..0283a1b 100644
 +      pthread_mutex_unlock(&retire->lock);
 +      if (any)
 +         result = darwin_allocate_iova(dev, size, 0, TU_BO_ALLOC_NO_FLAGS, &iova);
++      if (result == VK_ERROR_OUT_OF_DEVICE_MEMORY)
++         darwin_note_va_refusal(dev, size);
 +   }
     if (result != VK_SUCCESS)
        return result;
