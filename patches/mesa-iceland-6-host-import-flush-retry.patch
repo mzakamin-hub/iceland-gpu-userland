@@ -1,0 +1,22 @@
+diff --git a/src/freedreno/vulkan/tu_knl_darwin.cc b/src/freedreno/vulkan/tu_knl_darwin.cc
+index 79eaa44..0283a1b 100644
+--- a/src/freedreno/vulkan/tu_knl_darwin.cc
++++ b/src/freedreno/vulkan/tu_knl_darwin.cc
+@@ -1009,6 +1009,17 @@ darwin_bo_init_host(struct tu_device *dev, struct tu_bo **out_bo, void *pointer,
+       return collected;
+    uint64_t iova;
+    VkResult result = darwin_allocate_iova(dev, size, 0, TU_BO_ALLOC_NO_FLAGS, &iova);
++   if (result == VK_ERROR_OUT_OF_DEVICE_MEMORY) {
++      /* No GPU range for the import: the cached BOs may hold the window (iceland gains1 F2). Everything cached goes back and the
++       * range is asked for once more, as darwin_bo_init does when its range or its allocation fails; without it the import failed
++       * while freed BOs kept their ranges, and the render server left that surface's layer undrawn (OutOfMemory(Device)). */
++      struct darwin_retire_state *retire = (struct darwin_retire_state *)dev->darwin_retire;
++      pthread_mutex_lock(&retire->lock);
++      bool any = darwin_cache_flush(dev, retire);
++      pthread_mutex_unlock(&retire->lock);
++      if (any)
++         result = darwin_allocate_iova(dev, size, 0, TU_BO_ALLOC_NO_FLAGS, &iova);
++   }
+    if (result != VK_SUCCESS)
+       return result;
+ 
