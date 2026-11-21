@@ -1,0 +1,14 @@
+diff --git a/scripts/build-adreno-metal-bridge.py b/scripts/build-adreno-metal-bridge.py
+index 9f819c9..ea6c117 100644
+--- a/scripts/build-adreno-metal-bridge.py
++++ b/scripts/build-adreno-metal-bridge.py
+@@ -48,6 +48,9 @@ def git_tree(*steps):
+     return tree
+ 
+ 
++# m2v2 (r2507-m2v2): metal2vulkan development after 46e7cc96 (RUNTIME 2508-2538, SEMANTICS 2143), cherry-picked onto
++# 0063 + 0064 as bridge patch 0065. Appended here, apart from the list above, so the copied-buffer guard's lines stay as recorded.
++PATCHES.append(ROOT / 'drivers/AdrenoMetal/bridge/patches' / '0065-m2v-development-after-46e7cc96-cpu-and-submits.patch')
+ # The tree after each prefix of the recorded patches; the source must be one of them.
+ states = [git_tree(*[['apply', '--cached', str(patch)] for patch in PATCHES[:count]]) for count in range(len(PATCHES) + 1)]
+ current = git_tree(['add', '-A'])

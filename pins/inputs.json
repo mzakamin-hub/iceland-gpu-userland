@@ -66,6 +66,16 @@
       "path": "patches/adrenometal-render-server-thread-policy.patch",
       "applies_to": "drivers/AdrenoMetal",
       "sha256": "b49f7bd2097cb5270cf78abaf34da7a6a1be3f189878386bc2256941d920ef07"
+    },
+    "m2v_development_0065": {
+      "path": "patches/adrenometal-bridge-0065-m2v-development.patch",
+      "applies_to": "drivers/AdrenoMetal",
+      "sha256": "8aaa121b2849a8101a738e664e0e1dfa3dde868506a6199f992d13aba5d9bd34"
+    },
+    "m2v_development_0065_listed": {
+      "path": "patches/unixnu-bridge-lists-0065.patch",
+      "applies_to": ".",
+      "sha256": "4604c467814e17c8a12ccd2e27df3f2c3e61fe65d0ba036842dede94a5d52c21"
     }
   },
   "mesa_patches": {
