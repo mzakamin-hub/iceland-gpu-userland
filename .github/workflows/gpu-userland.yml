@@ -307,6 +307,8 @@ jobs:
           cp "$out/adrenoprobed" "$out/trust.json" artifacts/c2/
           cp "$bundle/Contents/MacOS/libvulkan_freedreno.dylib" artifacts/c2/
           tail -n 200 "$out/build-macos27.log" > artifacts/c2/bridge-build.log || true
+          # m2v1 P2: the plugin's debug symbols (same UUID as the stripped binary), for symbolizing spindumps offline; not installed.
+          if [ -d "$out/NativeAdrenoMetal.dSYM" ]; then tar -czf artifacts/c2/NativeAdrenoMetal.dSYM.tar.gz -C "$out" NativeAdrenoMetal.dSYM; fi
           cd artifacts
           python3 ../scripts/make-manifest.py --stage c2 --out c2/manifest.json c2
 
