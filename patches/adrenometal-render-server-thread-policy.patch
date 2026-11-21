@@ -1,0 +1,150 @@
+--- a/NativeBridgeMetalFrontend.mm
++++ b/NativeBridgeMetalFrontend.mm
+@@ -37,6 +37,7 @@
+ #include <mach-o/loader.h>
+ #include <execinfo.h>
+ #include <mach/mach.h>
++#include <mach/thread_policy.h>
+ #include <thread>
+ #include <fcntl.h>
+ #include <unistd.h>
+@@ -2585,6 +2586,24 @@
+   new(slot) Header{[](void *closure){Closure &call=*static_cast<Closure *>(closure);call();call.~Closure();},need};
+   new(slot+rounded(sizeof(Header))) Closure(std::forward<F>(work));
+  }
++ // m2v P1 (from AdrenoMetal 6245fea7): a setBytes copy lives in the batch's own chunks until the batch ran, instead of a heap vector per
++ // call that the encoding thread frees. The copy sits behind a header whose run does nothing, so run() steps over it as over a call
++ // (6245fea7 wrote the bytes bare, which run() would read as a header). It is not counted as a call.
++ const uint8_t *copyBytes(const void *src,size_t len) {
++  if(!src || !len)return nullptr;
++  const size_t need=rounded(sizeof(Header))+rounded(len);
++  while(at<chunks.size() && chunks[at].used+need>chunks[at].capacity)at++;
++  if(at==chunks.size()) {
++   Chunk chunk;chunk.capacity=std::max(kChunk,need);chunk.bytes.reset(new uint8_t[chunk.capacity]);
++   chunks.push_back(std::move(chunk));
++  }
++  Chunk &chunk=chunks[at];
++  uint8_t *slot=chunk.bytes.get()+chunk.used;chunk.used+=need;
++  new(slot) Header{[](void *){},need};
++  uint8_t *dst=slot+rounded(sizeof(Header));
++  memcpy(dst,src,len);
++  return dst;
++ }
+  // Each call in the order added, each destroyed once it ran; the batch is empty after.
+  void run() {
+   for(Chunk &chunk:chunks) {
+@@ -2613,15 +2632,32 @@
+ // samples during encoding calls of 30 ms or more were on a run queue. The first CoreAnimation thread that makes a command buffer is the
+ // reference; a timeshare reference leaves the encoding thread as it is.
+ static std::atomic<pthread_t> gEncodeReference{nullptr};
+-static void encodeAdoptReference() {
+- static bool adopted=false;
+- if(adopted)return;
++// m2v P1 (from AdrenoMetal 6245fea7): on macOS the render server's frame thread is WindowServer's ws_main_thread (fixed priority 79);
++// r3 showed native-metal-encode, metal2vulkan-lowering and -scheduler all timeshare at 37. Each thread that runs render-server frame
++// work adopts the reference's pthread policy and its Mach extended (non-timeshare) and precedence policies, once per reference.
++static void adoptRenderServerThreadPolicy() {
++ static thread_local pthread_t tAdoptedRef=nullptr;
+  const pthread_t reference=gEncodeReference.load(std::memory_order_acquire);
+- if(!reference)return;
+- adopted=true;
++ if(!reference || tAdoptedRef==reference)return;
++ tAdoptedRef=reference;
+  int policy=SCHED_OTHER;sched_param param{};
+- if(pthread_getschedparam(reference,&policy,&param) || policy==SCHED_OTHER)return;
+- (void)pthread_setschedparam(pthread_self(),policy,&param);
++ if(!pthread_getschedparam(reference,&policy,&param) && policy!=SCHED_OTHER)
++  (void)pthread_setschedparam(pthread_self(),policy,&param);
++ const thread_t refPort=pthread_mach_thread_np(reference);
++ const thread_t selfPort=pthread_mach_thread_np(pthread_self());
++ if(refPort!=MACH_PORT_NULL && selfPort!=MACH_PORT_NULL) {
++  thread_extended_policy_data_t ext{};
++  mach_msg_type_number_t extCount=THREAD_EXTENDED_POLICY_COUNT;
++  boolean_t extDefault=FALSE;
++  if(thread_policy_get(refPort,THREAD_EXTENDED_POLICY,(thread_policy_t)&ext,&extCount,&extDefault)==KERN_SUCCESS && !ext.timeshare) {
++   (void)thread_policy_set(selfPort,THREAD_EXTENDED_POLICY,(thread_policy_t)&ext,THREAD_EXTENDED_POLICY_COUNT);
++   thread_precedence_policy_data_t prec{};
++   mach_msg_type_number_t precCount=THREAD_PRECEDENCE_POLICY_COUNT;
++   boolean_t precDefault=FALSE;
++   if(thread_policy_get(refPort,THREAD_PRECEDENCE_POLICY,(thread_policy_t)&prec,&precCount,&precDefault)==KERN_SUCCESS)
++    (void)thread_policy_set(selfPort,THREAD_PRECEDENCE_POLICY,(thread_policy_t)&prec,THREAD_PRECEDENCE_POLICY_COUNT);
++  }
++ }
+ }
+ static EncodeThread &encodeThread() {
+  static EncodeThread *thread=[]{
+@@ -2637,7 +2673,7 @@
+     EncodeBatch *batch=t.batches.front();t.batches.pop_front();
+     const uint32_t depth=(uint32_t)t.batches.size(),tasks=(uint32_t)batch->count;
+     lock.unlock();tEncodeBatchId=batch->serial;
+-    encodeAdoptReference();
++    adoptRenderServerThreadPolicy();
+     batchStage(batch->serial,2,batch->enqueuedUs,tasks,depth);
+     const uint64_t cpuBefore=diagOn()?threadCpuUs():0;
+     @autoreleasepool {batch->run();}
+@@ -2652,6 +2688,14 @@
+  return *thread;
+ }
+ static bool onEncodeQueue() {return tOnEncodeThread;}
++static EncodeBatch *currentEncodeBatch() {
++ if(!tBatch) {
++  EncodeThread &t=encodeThread();
++  {std::lock_guard<std::mutex> lock(t.lock);if(!t.spare.empty()){tBatch=t.spare.back();t.spare.pop_back();}}
++  if(!tBatch)tBatch=new EncodeBatch;
++ }
++ return tBatch;
++}
+ static void encodeFlush() {
+  if(!tBatch || !tBatch->count)return;
+  EncodeThread &t=encodeThread();
+@@ -2904,9 +2948,9 @@
+ - (void)bytes:(const void *)bytes length:(NSUInteger)length index:(NSUInteger)index stage:(uint32_t)stage {
+  if(dumpMaybe(_commandBuffer))[self dumpBind:[NSData dataWithBytes:bytes length:length] index:index stage:stage];
+  if(gDrawStats)[self noteState:kDSBytes key:stage<<8|(uint32_t)index object:nullptr value:hashBytes(bytes,length)];
+- if(!gEncodeThread){[self check:nmb_encoder_set_bytes(_handle,stage,bytes,length,(uint32_t)index) what:"setBytes"];return;}
+- const std::vector<uint8_t> copy((const uint8_t *)bytes,(const uint8_t *)bytes+(bytes?length:0));   // the caller's bytes are its own again
+- ENCODE([self check:nmb_encoder_set_bytes(self->_handle,stage,copy.empty()?nullptr:copy.data(),length,(uint32_t)index) what:"setBytes"]);
++ if(!gEncodeThread || onEncodeQueue()){[self check:nmb_encoder_set_bytes(_handle,stage,bytes,length,(uint32_t)index) what:"setBytes"];return;}
++ const uint8_t *copy=currentEncodeBatch()->copyBytes(bytes,length);   // the caller's bytes are its own again
++ ENCODE([self check:nmb_encoder_set_bytes(self->_handle,stage,copy,length,(uint32_t)index) what:"setBytes"]);
+ }
+ - (void)fence:(id<MTLFence>)fence stages:(uint64_t)stages update:(bool)update {
+  if(![(id)fence isKindOfClass:[NBFence class]]){[_commandBuffer refuse:@"foreign fence"];return;}
+@@ -3351,9 +3395,19 @@
+ // instead; the swap offered by them is held back by the scanout client until the GPU finished everything committed before the offer
+ // (NBWaitInFlight), and waitUntilCompleted, the resource waits and the real completion work (surface flushes, release) are unchanged.
+ static bool earlyOn() {return false;}   // reverted: with the handlers early the blur passes read frames that were not finished (i343, i344)
++static bool threadFixedPriority(thread_t thread) {
++ if(thread==MACH_PORT_NULL)return false;
++ thread_extended_policy_data_t ext{};
++ mach_msg_type_number_t count=THREAD_EXTENDED_POLICY_COUNT;
++ boolean_t getDefault=FALSE;
++ return thread_policy_get(thread,THREAD_EXTENDED_POLICY,(thread_policy_t)&ext,&count,&getDefault)==KERN_SUCCESS && !ext.timeshare;
++}
++// m2v P1 (from AdrenoMetal 6245fea7): macOS WindowServer encodes its frames on ws_main_thread, not a com.apple.coreanimation thread.
+ static bool onRenderServerThread() {
+- char name[32]={};pthread_getname_np(pthread_self(),name,sizeof name);
+- return !strncmp(name,"com.apple.coreanimation",23);
++ char name[64]={};pthread_getname_np(pthread_self(),name,sizeof name);
++ if(!strncmp(name,"com.apple.coreanimation",23) || !strcmp(name,"ws_main_thread") ||
++    !strncmp(name,"ca.display.",11) || strstr(name,"RenderServer")!=nullptr)return true;
++ return nativeIsRenderServer() && threadFixedPriority(pthread_mach_thread_np(pthread_self()));
+ }
+ extern "C" void NBWaitInFlight(uint64_t beforeUs);
+ // ---- NATIVE_METAL_DUMP_CB ----
+@@ -3847,6 +3901,7 @@
+ - (void)encodeWaitForEvent:(id<MTLEvent>)event value:(uint64_t)value {[self event:event value:value signal:false];}
+ // The runtime has submitted the work. Deliver scheduling without waiting for GPU completion.
+ - (void)didSchedule {
++ if(isRenderServer())adoptRenderServerThreadPolicy();
+  {
+   const uint64_t took=nowUs()-self.committedUs;
+   std::lock_guard<std::mutex> lock(gCommitLock);
+@@ -3868,6 +3923,7 @@
+ // After completion (or a refusal): invalidate the CPU's view of imported surfaces, then completed handlers, once.
+ - (void)finish {
+  DetailCommandScope commandScope(traceNumber);
++ if(isRenderServer())adoptRenderServerThreadPolicy();
+  traceThread(3);
+  frontStage(traceNumber,self.commitIndex,8);
+  const uint64_t flushed=flushSurfaces(_surfaces);
