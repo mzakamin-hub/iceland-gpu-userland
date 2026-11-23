@@ -84,6 +84,10 @@
     "mesa_iceland_6": {
       "path": "patches/mesa-iceland-6-host-import-flush-retry.patch",
       "sha256": "fe9cc76431ffe900789f6b5407f0383eb50ba93642a96ec788cd14592c47941f"
+    },
+    "mesa_iceland_7": {
+      "path": "patches/mesa-iceland-7-turnip-skip-invisible-tiles-and-clip-render-area.patch",
+      "sha256": "c28d555ddbb49c5a371d71498d62777a4d6a7b73aa77452d3242d51d075d8da7"
     }
   },
   "shader_check": {
