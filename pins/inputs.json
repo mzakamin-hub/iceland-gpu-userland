@@ -66,6 +66,11 @@
       "path": "patches/adrenometal-render-server-thread-policy.patch",
       "applies_to": "drivers/AdrenoMetal",
       "sha256": "b49f7bd2097cb5270cf78abaf34da7a6a1be3f189878386bc2256941d920ef07"
+    },
+    "encode_switch_waitlog": {
+      "path": "patches/adrenometal-encode-switch-waitlog.patch",
+      "applies_to": "drivers/AdrenoMetal",
+      "sha256": "3b6a657da2d1099368ba116205bbc80e55ab358cc229c2f3b48b606f27be5800"
     }
   },
   "mesa_patches": {

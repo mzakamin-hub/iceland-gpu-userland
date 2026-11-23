@@ -1,0 +1,118 @@
+diff --git a/NativeBridgeMetalFrontend.mm b/NativeBridgeMetalFrontend.mm
+index c527ec1..6a1f13c 100644
+--- a/NativeBridgeMetalFrontend.mm
++++ b/NativeBridgeMetalFrontend.mm
+@@ -188,7 +188,27 @@ static void histAdd(std::atomic<uint64_t> *bins,uint64_t us) {unsigned b=0;const
+ static Timed gTimeCompile;                     // the system compiler's requests (codeGenRequest), the shader cache's misses
+ static std::atomic<uint64_t> gCompileCached;   // requests the shader cache answered
+ static Timed gTimeWaitScheduled,gTimeWaitCompleted;
++// laneA: how long callers were held by the encoding thread (encodeDrain, only when it had work left) and by
++// commitAndWaitUntilSubmitted as a whole (its commit, the drain and the scheduled wait), for the render server's wait line.
++static Timed gTimeDrain,gTimeCommitAndWait;
+ static Timed gTimeResourceWait;
++// laneA: the value of a boot argument named exactly `name` (matched at the start of the command line or after a space), or
++// nullptr. kern.bootargs is the command line only (built-in kernel words are not in it).
++static const char *laneBootArgValue(const char *name,char *args,size_t size) {
++ size_t got=size-1;
++ if(sysctlbyname("kern.bootargs",args,&got,nullptr,0)!=0)return nullptr;
++ args[got<size?got:size-1]=0;
++ const size_t length=strlen(name);
++ for(const char *at=args;(at=strstr(at,name));at+=length)
++  if((at==args || at[-1]==' ') && at[length]=='=')return at+length+1;
++ return nullptr;
++}
++static bool laneBootArgIs(const char *name,const char *value) {
++ char args[1100]={};
++ const char *at=laneBootArgValue(name,args,sizeof args);
++ const size_t length=strlen(value);
++ return at && !strncmp(at,value,length) && (at[length]==0 || at[length]==' ');
++}
+ static std::atomic<uint64_t> gResourceChecks,gResourceSkipped;
+ static Timed gTimeSurfaceFlush;
+ static std::atomic<uint64_t> gSurfaceFlushBytes,gSurfaceFlushDuplicates;
+@@ -2552,8 +2572,9 @@ static void dumpNote(NBCommandBuffer *commandBuffer,NSMutableArray *into,id text
+ // the in-flight use of a resource -- first lets the thread catch up (encodeDrain). Other processes keep each call on the caller's
+ // thread: where the runtime is nearly all a thread's work the split only adds its cost (GFXBench's Driver Overhead 2: 12% fewer frames
+ // on 40% more CPU a frame). Switches read when a process starts: /private/var/ngpu/debug/encode-thread puts every process on one,
+-// no-encode-thread none.
+-static const bool gEncodeThread=access("/private/var/ngpu/debug/no-encode-thread",F_OK)!=0 &&
++// no-encode-thread none. laneA (E2): the boot argument metal-encode=0 does what no-encode-thread does, so one word on the boot line
++// switches it for an A/B without a file on the Data volume (a file there would outlive the run).
++static const bool gEncodeThread=access("/private/var/ngpu/debug/no-encode-thread",F_OK)!=0 && !laneBootArgIs("metal-encode","0") &&
+                                 (isRenderServer() || access("/private/var/ngpu/debug/encode-thread",F_OK)==0);
+ // One thread of its own runs the work, in batches a calling thread hands over at 64 calls, at an encoder's end, at a commit and before a
+ // wait: a dispatch queue took a call at a time and woke one of the pool's threads for each, a cost above a cheap call's own (GFXBench's
+@@ -2725,7 +2746,11 @@ static void encodeDrain() {
+  EncodeThread &t=encodeThread();
+  std::unique_lock<std::mutex> lock(t.lock);
+  const uint64_t target=t.queued;
++ if(t.done>=target)return;
++ const uint64_t began=nowUs();
+  t.idle.wait(lock,[&]{return t.done>=target;});
++ lock.unlock();
++ gTimeDrain.add(began);
+ }
+ template<class F> struct TracedEncodeCall {
+  std::optional<F> work;const char *label;uint32_t line;uint64_t id,command,parent,queued;
+@@ -3719,7 +3744,12 @@ static char kUserDictionaryKey;
+ // The kernel driver's own submission times are not recorded: 0 is Metal's answer where they are unavailable.
+ - (CFTimeInterval)kernelStartTime {return 0;}
+ - (CFTimeInterval)kernelEndTime {return 0;}
+-- (BOOL)commitAndWaitUntilSubmitted {[(id<MTLCommandBuffer>)self commit];[self waitUntilScheduled];return !self.failedLocally;}
++- (BOOL)commitAndWaitUntilSubmitted {
++ const uint64_t began=nowUs();
++ [(id<MTLCommandBuffer>)self commit];[self waitUntilScheduled];
++ gTimeCommitAndWait.add(began);
++ return !self.failedLocally;
++}
+ - (CFTimeInterval)GPUStartTime {return self.submitted && !self.failedLocally?nmb_command_buffer_gpu_time(_handle,false):0;}
+ - (CFTimeInterval)GPUEndTime {return self.submitted && !self.failedLocally?nmb_command_buffer_gpu_time(_handle,true):0;}
+ // An encoder whose runtime half `make` makes, on the encoding thread when that is on. A refused encoder is still an object: its calls
+@@ -5672,6 +5702,39 @@ static void logFlowCounts() {
+  dispatch_resume(timer);
+ }
+ 
++// laneA: in the render server only, with metal-waitlog=1 or icedtr= other than 0 on the boot line (every gesture test line has
++// icedtr=), one line every 10 s while commits come: where WindowServer's frame thread was held -- commitAndWaitUntilSubmitted as a
++// whole, the drain of the encoding thread, the scheduled and completed waits (count / total ms / longest ms, since the start) --
++// with t = seconds of mach_absolute_time (the kernel console's clock), so a run's phases can be cut out of the series. Also says
++// once whether the encoding thread is on (metal-encode=0 turns it off).
++static void logRenderServerWaits() {
++ if(!isRenderServer())return;
++ char args[1100]={};
++ const char *dtr=laneBootArgValue("icedtr",args,sizeof args);
++ const bool on=laneBootArgIs("metal-waitlog","1") || (dtr && dtr[0] && dtr[0]!='0' && dtr[0]!=' ');
++ os_log(OS_LOG_DEFAULT,"NativeAdrenoMetal laneA: encoding thread %{public}s%{public}s; wait line %{public}s",gEncodeThread?"on":"OFF",
++  gEncodeThread?"":(laneBootArgIs("metal-encode","0")?" (metal-encode=0)":" (no-encode-thread file)"),on?"on":"off");
++ if(!on)return;
++ static dispatch_source_t timer;
++ timer=dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER,0,0,dispatch_get_global_queue(QOS_CLASS_UTILITY,0));
++ dispatch_source_set_timer(timer,dispatch_time(DISPATCH_TIME_NOW,10*NSEC_PER_SEC),10*NSEC_PER_SEC,2*NSEC_PER_SEC);
++ dispatch_source_set_event_handler(timer,^{
++  static uint64_t lastCommits;
++  const uint64_t commits=gCommits.load();
++  if(commits==lastCommits)return;
++  lastCommits=commits;
++  const auto ms=[](const std::atomic<uint64_t> &us){return (unsigned long long)(us.load()/1000);};
++  os_log(OS_LOG_DEFAULT,"NativeAdrenoMetal waits: t=%.1f commits %llu | cawus %llu/%llu/%llu | drain %llu/%llu/%llu | sched %llu/%llu/%llu | "
++   "done %llu/%llu/%llu | enc %d",
++   (double)clock_gettime_nsec_np(CLOCK_UPTIME_RAW)/1e9,(unsigned long long)commits,
++   (unsigned long long)gTimeCommitAndWait.count.load(),ms(gTimeCommitAndWait.total),ms(gTimeCommitAndWait.slowest),
++   (unsigned long long)gTimeDrain.count.load(),ms(gTimeDrain.total),ms(gTimeDrain.slowest),
++   (unsigned long long)gTimeWaitScheduled.count.load(),ms(gTimeWaitScheduled.total),ms(gTimeWaitScheduled.slowest),
++   (unsigned long long)gTimeWaitCompleted.count.load(),ms(gTimeWaitCompleted.total),ms(gTimeWaitCompleted.slowest),gEncodeThread?1:0);
++ });
++ dispatch_resume(timer);
++}
++
+ // With diag=1, a process other than the render server (which has the telemetry table) writes what it compiled to the system log
+ // every 30 s while that changes: pipeline states, libraries and compiler requests made with their total and longest times, the
+ // driver pipelines made (in all, at a state's creation, at a draw or dispatch) and the driver's time in them, the shader cache's
+@@ -5777,6 +5840,7 @@ extern "C" id native_bridge_metal_open(const char *loader,const char *cache,uint
+  if(!gDevice){NBLOG(@"native-metal: device refused: %s",nmb_last_error());return nil;}
+  watchImportPressure();
+  logFlowCounts();
++ logRenderServerWaits();
+  logClientWork();
+  logClientMemory();
+  // Where this process's pipeline cache is and whose it is: a cache serves the processes of its user that may write its directory.
