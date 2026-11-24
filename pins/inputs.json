@@ -66,6 +66,11 @@
       "path": "patches/adrenometal-render-server-thread-policy.patch",
       "applies_to": "drivers/AdrenoMetal",
       "sha256": "b49f7bd2097cb5270cf78abaf34da7a6a1be3f189878386bc2256941d920ef07"
+    },
+    "shader_priming_fixes": {
+      "path": "patches/adrenometal-shader-priming-fixes.patch",
+      "applies_to": "drivers/AdrenoMetal",
+      "sha256": "6672b06acf9c803b48c4a099e8ef5ab4581e951f6e4fe2ae6a28792019a31d15"
     }
   },
   "mesa_patches": {
