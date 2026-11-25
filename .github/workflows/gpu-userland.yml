@@ -293,6 +293,15 @@ jobs:
           # (scripts/make-owner-trust-bundle.py) is never built here; it needs Apple trust caches and is built locally.
           python3 scripts/build-adreno-metal-plugin.py --target macos27 --no-replay
 
+      - name: Build the Shader Cache app
+        working-directory: unixnu
+        run: |
+          set -euo pipefail
+          # AdrenoMetal's own builder (tools/build-shader-cache-app.py): on macOS the shader priming (PrimeShaders.h) runs only in
+          # this app's root worker, never in the plugin. Built from the same patched AdrenoMetal tree as the plugin, signed ad hoc;
+          # it writes shader-cache-trust.json (the three CDHashes) beside the app.
+          python3 drivers/AdrenoMetal/tools/build-shader-cache-app.py build/adreno-metal-plugin-macos27
+
       - name: Sign reports, manifest and bundle tarball
         run: |
           set -euo pipefail
@@ -303,6 +312,13 @@ jobs:
           bash scripts/capture-signature.sh "$bundle/Contents/MacOS/NativeAdrenoMetal" artifacts/c2
           bash scripts/capture-signature.sh "$bundle/Contents/MacOS/libvulkan_freedreno.dylib" artifacts/c2
           bash scripts/capture-signature.sh "$out/adrenoprobed" artifacts/c2
+          app="$out/Shader Cache.app"
+          bash scripts/capture-signature.sh "$app" artifacts/c2
+          for exe in ShaderCache ShaderCacheWorker ShaderCacheRegister; do
+            bash scripts/capture-signature.sh "$app/Contents/MacOS/$exe" artifacts/c2
+          done
+          tar -czf artifacts/c2/ShaderCache.app.tar.gz -C "$out" "Shader Cache.app"
+          cp "$out/shader-cache-trust.json" artifacts/c2/
           tar -czf artifacts/c2/NativeAdrenoMetal.bundle.tar.gz -C "$out" NativeAdrenoMetal.bundle
           cp "$out/adrenoprobed" "$out/trust.json" artifacts/c2/
           cp "$bundle/Contents/MacOS/libvulkan_freedreno.dylib" artifacts/c2/
