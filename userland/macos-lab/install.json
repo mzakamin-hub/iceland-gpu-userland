@@ -1,0 +1,30 @@
+{
+  "component": "macos-lab",
+  "products": [
+    {
+      "path": "clock-probe",
+      "identifier": "org.iceland.lab.clock-probe",
+      "install": "bin/lab/clock-probe"
+    },
+    {
+      "path": "video-probe",
+      "identifier": "org.iceland.lab.video-probe",
+      "install": "bin/lab/video-probe"
+    },
+    {
+      "path": "gpu-correctness-probe",
+      "identifier": "org.iceland.lab.gpu-correctness-probe",
+      "install": "bin/lab/gpu-correctness-probe"
+    },
+    {
+      "path": "icon-probe",
+      "identifier": "org.iceland.lab.icon-probe",
+      "install": "bin/lab/icon-probe"
+    },
+    {
+      "path": "gpu-scene",
+      "identifier": "org.iceland.lab.gpu-scene",
+      "install": "bin/lab/gpu-scene"
+    }
+  ]
+}

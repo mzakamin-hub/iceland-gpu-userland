@@ -104,6 +104,51 @@
       "upstream_sha256": "75c4333bcac915a6b0efda296347a6b7c3437382575f3af3cdd73aec1cb2df3e",
       "sha256": "64be13ebe39deca7de2dce7054b9345e375bb1151d517258b4812e57811c3dae",
       "note": "the pin's file with one provenance line prepended; the rest is byte-identical"
+    },
+    "macos_lab_clock_probe": {
+      "path": "userland/macos-lab/clock-probe.c",
+      "from": "https://github.com/UniXNU/UniXNU-sheng",
+      "commit": "c8f92b208068eeaa4cd2b0f592671f04ee70076e",
+      "upstream_path": "scripts/macos-lab/clock-probe.c",
+      "upstream_sha256": "f8dd5400af7c69ba1e8e784051a4e3d5468d52658ec96f1b15e455d3d97d8298",
+      "sha256": "9590bac2e4a5cb222eb32ad629c674352de6537b73b95ae3a63be6c6d13fbf46",
+      "note": "the pin's file with one provenance line prepended; the rest is byte-identical"
+    },
+    "macos_lab_video_probe": {
+      "path": "userland/macos-lab/video-probe.m",
+      "from": "https://github.com/UniXNU/UniXNU-sheng",
+      "commit": "c8f92b208068eeaa4cd2b0f592671f04ee70076e",
+      "upstream_path": "scripts/macos-lab/video-probe.m",
+      "upstream_sha256": "3ab80df45792e5bcc6a1d81d8635f0f69b7992585f25284649cfb161f2ba9c2a",
+      "sha256": "ba0dddeac64831146e8cf9512a2b05f320d671cc6c15c33839152dd2f3daab5d",
+      "note": "the pin's file with one provenance line prepended; the rest is byte-identical"
+    },
+    "macos_lab_gpu_correctness_probe": {
+      "path": "userland/macos-lab/gpu-correctness-probe.m",
+      "from": "https://github.com/UniXNU/UniXNU-sheng",
+      "commit": "c8f92b208068eeaa4cd2b0f592671f04ee70076e",
+      "upstream_path": "scripts/macos-lab/gpu-correctness-probe.m",
+      "upstream_sha256": "170b5a79e29894c5444d0ed942613c5e3850b8a38677b70ea605478d81dc12d2",
+      "sha256": "b03b84c48fbf0055dc781b57520ed5792bad5600d94f462140ae6ce063e4ff95",
+      "note": "the pin's file with one provenance line prepended; the rest is byte-identical"
+    },
+    "macos_lab_icon_probe": {
+      "path": "userland/macos-lab/icon-probe.m",
+      "from": "https://github.com/UniXNU/UniXNU-sheng",
+      "commit": "c8f92b208068eeaa4cd2b0f592671f04ee70076e",
+      "upstream_path": "scripts/macos-lab/icon-probe.m",
+      "upstream_sha256": "57992fba049c2265656f438b1fa2d598b04a4df6efac8b5309c1c99f31dc41a8",
+      "sha256": "e0ae510251226c59b5b61533c5d7b0d5d439b1a5bda82e20bda6d90edaf73f78",
+      "note": "the pin's file with one provenance line prepended; the rest is byte-identical"
+    },
+    "macos_lab_scene": {
+      "path": "userland/macos-lab/scene.m",
+      "from": "https://github.com/UniXNU/UniXNU-sheng",
+      "commit": "c8f92b208068eeaa4cd2b0f592671f04ee70076e",
+      "upstream_path": "scripts/macos-lab/scene.m",
+      "upstream_sha256": "30f8072c019e207f1297e94decd6294ba0ac35a1ea98cf8b780fd8f2f4245659",
+      "sha256": "b7865f12fee1f42831d51aded5b78ccf88fd36fbec98a5ab7b6563daf060cff1",
+      "note": "the pin's file with one provenance line prepended; the rest is byte-identical"
     }
   }
 }
