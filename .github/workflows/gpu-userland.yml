@@ -7,6 +7,10 @@ name: GPU userland (macOS 27, arm64e)
 # Cost: workflow_dispatch only, one run at a time, standard macos-26 runners, a cap per job: Turnip and plugin
 # 40 min each (the repository is public: standard runners are free), 8 for the environment check, 10 for the shim and absentd.
 # The account-wide ledger is kept off-repo with the project notes.
+#
+# Caches (kit2 U7; input reuse, default yes): c12 keeps Turnip's dylib and the Rust Metal bridge in GitHub's Actions cache,
+# keyed by Xcode + SDK + toolchain + the exact inputs; the bridge is taken only after UniXNU's own identity re-check
+# (NMB_PREBUILT_BRIDGE). reuse=no builds both from source. c1/turnip-origin.txt and c2/bridge-origin.txt say which it was.
 
 on:
   workflow_dispatch:
@@ -21,6 +25,12 @@ on:
         description: 'Xcode to select: /Applications/Xcode_<version>.app (empty = newest installed)'
         required: false
         default: ''
+      reuse:
+        description: 'c12: yes = take a cached Turnip and Metal bridge whose identity matches this run (U7); no = build both from source'
+        type: choice
+        options: ['yes', 'no']
+        required: false
+        default: 'yes'
 
 permissions:
   contents: read
@@ -199,9 +209,68 @@ jobs:
       - name: Verify the pins before building
         run: python3 scripts/verify-pins.py unixnu mesa
 
+      - name: Key a cached Turnip
+        id: turnip-key
+        if: inputs.reuse != 'no'
+        run: |
+          # U7 (as sheng's macos-lab.yml keys its build caches by Xcode and SDK): the dylib depends on the toolchain (Xcode, the
+          # macOS SDK, the host tools that generate Mesa sources) and on the exact Mesa tree, which verify-pins just proved is the
+          # pin plus UniXNU's record plus ours. The key covers all of them; a miss builds from source as before.
+          set -euo pipefail
+          key="$(python3 - <<'KEY'
+          import hashlib, json, os, subprocess
+          run = lambda *a: subprocess.run(a, capture_output=True, text=True).stdout
+          pins = json.load(open('pins/inputs.json'))
+          parts = [run('xcodebuild', '-version'), os.environ.get('SDK_VERSION', ''), run('bison', '--version').splitlines()[0],
+                   run('flex', '--version'), run('glslangValidator', '--version').splitlines()[0] if run('glslangValidator', '--version') else '',
+                   run('unixnu/.cache/mesa-venv/bin/meson', '--version'), run('unixnu/.cache/mesa-venv/bin/ninja', '--version'),
+                   pins['unixnu']['commit'], json.dumps(pins['unixnu']['submodules'], sort_keys=True), pins['mesa']['commit'],
+                   run('git', '-C', 'unixnu/.cache/mesa-work', 'diff', 'HEAD'),
+                   open('unixnu/scripts/data/adreno-compiler-inputs.json').read()]
+          print('turnip-macos27-v1-' + hashlib.sha256('\0'.join(parts).encode()).hexdigest()[:24])
+          KEY
+          )"
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+          echo "== Turnip cache key $key"
+
+      - name: Restore a cached Turnip
+        id: turnip-cache
+        if: inputs.reuse != 'no'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          key: ${{ steps.turnip-key.outputs.key }}
+          path: ${{ runner.temp }}/turnip-cache
+
+      - name: Use the cached Turnip
+        if: steps.turnip-cache.outputs.cache-hit == 'true'
+        run: |
+          set -euo pipefail
+          out="unixnu/build/mesa-tu-macos27"
+          mkdir -p "$out/src/freedreno/vulkan"
+          cp "$RUNNER_TEMP/turnip-cache/libvulkan_freedreno.dylib" "$out/src/freedreno/vulkan/"
+          cp "$RUNNER_TEMP/turnip-cache/builtin-build-profile.json" "$out/"
+          echo "== reused Turnip ${{ steps.turnip-key.outputs.key }}: $(shasum -a 256 "$out/src/freedreno/vulkan/libvulkan_freedreno.dylib")"
+          echo "TURNIP_ORIGIN=reused ${{ steps.turnip-key.outputs.key }}" >> "$GITHUB_ENV"
+
       - name: Build Turnip with the Darwin kernel backend
+        if: steps.turnip-cache.outputs.cache-hit != 'true'
         working-directory: unixnu
         run: python3 scripts/build-turnip-darwin.py --target macos27
+
+      - name: Keep the Turnip build for the next run
+        if: inputs.reuse != 'no' && steps.turnip-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/turnip-cache"
+          cp unixnu/build/mesa-tu-macos27/src/freedreno/vulkan/libvulkan_freedreno.dylib unixnu/build/mesa-tu-macos27/builtin-build-profile.json \
+            "$RUNNER_TEMP/turnip-cache/"
+
+      - name: Save the Turnip build
+        if: inputs.reuse != 'no' && steps.turnip-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          key: ${{ steps.turnip-key.outputs.key }}
+          path: ${{ runner.temp }}/turnip-cache
 
       - name: Sign and capture Turnip's dylib
         run: |
@@ -212,6 +281,7 @@ jobs:
           mkdir -p artifacts/c1
           cp "$lib" artifacts/c1/
           cp unixnu/build/mesa-tu-macos27/builtin-build-profile.json artifacts/c1/
+          echo "${TURNIP_ORIGIN:-built from source in this run}" > artifacts/c1/turnip-origin.txt
           tail -n 400 unixnu/.cache/mesa-tu-macos27-build.log > artifacts/c1/mesa-build.log || true
           tail -n 200 unixnu/.cache/mesa-tu-macos27-configure.log > artifacts/c1/mesa-configure.log || true
           bash scripts/capture-signature.sh artifacts/c1/libvulkan_freedreno.dylib artifacts/c1
@@ -280,6 +350,54 @@ jobs:
           name: c1-turnip
           path: c1-turnip
 
+      - name: Key a prebuilt Metal bridge
+        id: bridge-key
+        if: inputs.reuse != 'no'
+        run: |
+          # U7: the Rust bridge (libadreno_metal_bridge.a, fat LTO, most of this job's time) depends on the toolchain (Xcode, the
+          # macOS SDK, rustc 1.98.0 and its rust-src), the translator pin and the patched AdrenoMetal tree. The key covers them.
+          # It is only a lookup: UniXNU's builder (NMB_PREBUILT_BRIDGE, build-adreno-metal-bridge.py) re-checks the archive's
+          # recorded identity (target, translator, patched translator tree, AdrenoMetal commit, Cargo manifest, the sha256 of
+          # every bridge/*.rs and shader fixture) and the archive's own sha256 before it uses it, so a stale entry costs a rebuild.
+          set -euo pipefail
+          key="$(python3 - <<'KEY'
+          import hashlib, json, os, subprocess
+          run = lambda *a: subprocess.run(a, capture_output=True, text=True).stdout
+          pins = json.load(open('pins/inputs.json'))
+          am = 'unixnu/drivers/AdrenoMetal'
+          parts = [run('xcodebuild', '-version'), os.environ.get('SDK_VERSION', ''), run('rustup', 'run', '1.98.0', 'rustc', '-vV'),
+                   pins['translator']['commit'], run('git', '-C', am, 'rev-parse', 'HEAD'), run('git', '-C', am, 'diff', 'HEAD'),
+                   open('unixnu/scripts/build-adreno-metal-bridge.py').read(), open('unixnu/scripts/data/gpu-metal-vulkan-inputs.json').read()]
+          print('metal-bridge-macos27-v1-' + hashlib.sha256('\0'.join(parts).encode()).hexdigest()[:24])
+          KEY
+          )"
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+          echo "== Metal bridge cache key $key"
+
+      - name: Restore a prebuilt Metal bridge
+        id: bridge-cache
+        if: inputs.reuse != 'no'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          key: ${{ steps.bridge-key.outputs.key }}
+          path: ${{ runner.temp }}/metal-bridge
+
+      - name: Check the prebuilt bridge's identity
+        if: steps.bridge-cache.outputs.cache-hit == 'true'
+        working-directory: unixnu
+        run: |
+          # UniXNU's own check (d73e814): the builder takes the archive only if its identity and sha256 match this tree, and stops
+          # with "Prebuilt Metal bridge differs ..." otherwise. On a match the plugin build below gets NMB_PREBUILT_BRIDGE too
+          # (the same check runs again there); on a mismatch it builds the bridge from source as before.
+          set -uo pipefail
+          record="$RUNNER_TEMP/metal-bridge/libadreno_metal_bridge.a.json"
+          if NMB_PREBUILT_BRIDGE="$record" python3 scripts/build-adreno-metal-bridge.py --target macos27; then
+            echo "NMB_PREBUILT_BRIDGE=$record" >> "$GITHUB_ENV"
+            echo "BRIDGE_ORIGIN=reused ${{ steps.bridge-key.outputs.key }} (identity and sha256 re-checked)" >> "$GITHUB_ENV"
+          else
+            echo "::warning::the cached Metal bridge does not match this tree; building it from source"
+          fi
+
       - name: Build the Metal plugin and the probe daemon
         working-directory: unixnu
         run: |
@@ -292,6 +410,21 @@ jobs:
           # (NativeAdrenoUserTest.h includes it under __has_include). The owner trust module
           # (scripts/make-owner-trust-bundle.py) is never built here; it needs Apple trust caches and is built locally.
           python3 scripts/build-adreno-metal-plugin.py --target macos27 --no-replay
+
+      - name: Keep the Metal bridge for the next run
+        if: inputs.reuse != 'no' && env.NMB_PREBUILT_BRIDGE == ''
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/metal-bridge"
+          cp unixnu/build/adreno-metal-bridge/macos27/libadreno_metal_bridge.a unixnu/build/adreno-metal-bridge/macos27/libadreno_metal_bridge.a.json \
+            "$RUNNER_TEMP/metal-bridge/"
+
+      - name: Save the Metal bridge
+        if: inputs.reuse != 'no' && env.NMB_PREBUILT_BRIDGE == '' && steps.bridge-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          key: ${{ steps.bridge-key.outputs.key }}
+          path: ${{ runner.temp }}/metal-bridge
 
       - name: Build the Shader Cache app
         working-directory: unixnu
@@ -323,6 +456,9 @@ jobs:
           cp "$out/adrenoprobed" "$out/trust.json" artifacts/c2/
           cp "$bundle/Contents/MacOS/libvulkan_freedreno.dylib" artifacts/c2/
           tail -n 200 "$out/build-macos27.log" > artifacts/c2/bridge-build.log || true
+          # U7: where the Rust bridge came from, and its full identity record, for the trust review.
+          echo "${BRIDGE_ORIGIN:-built from source in this run}" > artifacts/c2/bridge-origin.txt
+          cp unixnu/build/adreno-metal-bridge/macos27/libadreno_metal_bridge.a.json artifacts/c2/bridge-identity.json
           # m2v1 P2: the plugin's debug symbols (same UUID as the stripped binary), for symbolizing spindumps offline; not installed.
           if [ -d "$out/NativeAdrenoMetal.dSYM" ]; then tar -czf artifacts/c2/NativeAdrenoMetal.dSYM.tar.gz -C "$out" NativeAdrenoMetal.dSYM; fi
           cd artifacts
