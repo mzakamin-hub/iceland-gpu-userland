@@ -1,43 +1,12 @@
-diff --git a/NativeBridgeMetalFrontend.mm b/NativeBridgeMetalFrontend.mm
-index c527ec1..f23a9ee 100644
---- a/NativeBridgeMetalFrontend.mm
-+++ b/NativeBridgeMetalFrontend.mm
-@@ -2070,8 +2070,12 @@ static NSError *functionLookupError(NBLibrary *library, NSString *name, NSString
-   journal(head+std::string(name.UTF8String?:"?")+" k="+text+(handle?std::string():" err="+std::string(lastError().UTF8String?:"?"))+" | "+quartzCoreCallers());
-  }
-  if(!handle){
--  noteProblem([NSString stringWithFormat:@"specialized function %@: %@",name,lastError()]);
--  if(error)*error=functionLookupError(self,name,[NSString stringWithFormat:@"specialized function: %@",lastError()]);
-+  NSError *failure=functionLookupError(self,name,[NSString stringWithFormat:@"specialized function: %@",lastError()]);
-+  // A missing kernel in one library is an expected Core Image probe.
-+  // Preserve compile failures for functions that this library declares.
-+  if(![failure.domain isEqualToString:MTLLibraryErrorDomain] || failure.code!=MTLLibraryErrorFunctionNotFound)
-+   noteProblem([NSString stringWithFormat:@"specialized function %@: %@",name,lastError()]);
-+  if(error)*error=failure;
-   return nil;
-  }
-  NBFunction *function=[NBFunction new];function.handle=handle;function.name=name;function.sourceName=name;function.functionType=(MTLFunctionType)nmb_function_type(handle);
-@@ -2143,13 +2147,18 @@ static NSError *functionLookupError(NBLibrary *library, NSString *name, NSString
-  function.library=self;return (id<MTLFunction>)function;
- }
- // Shader priming (PrimeShaders.h): the function with each of its function constants set to zero, or nil.
--- (id<MTLFunction>)nb_newFunctionWithZeroConstants:(NSString *)name {
-- NmbFunction *handle=name?nmb_function_new_zero_constants(_handle,name.UTF8String):nullptr;
-+- (id<MTLFunction>)nb_newFunctionForPriming:(NSString *)name requiredOnly:(BOOL)requiredOnly oneIndex:(uint32_t)index {
-+ if(!name)return nil;
-+ NmbFunction *handle=requiredOnly?nmb_function_new_required_constants(_handle,name.UTF8String,index):
-+                                  nmb_function_new_zero_constants(_handle,name.UTF8String);
-  if(!handle)return nil;
-  NBFunction *function=[NBFunction new];function.handle=handle;function.name=name;function.sourceName=name;function.functionType=(MTLFunctionType)nmb_function_type(handle);
-  function.library=self;
-  return (id<MTLFunction>)function;
- }
-+- (id<MTLFunction>)nb_newFunctionWithZeroConstants:(NSString *)name {
-+ return [self nb_newFunctionForPriming:name requiredOnly:NO oneIndex:UINT32_MAX];
-+}
- @end
- // A function's wrapped bitcode in its library's metallib: the function list's entry NAMEd as the function, MDSZ bytes at OFFT's bitcode
- // offset into the bitcode section (header: function list at 24, bitcode section offset and size at 72 and 80; tags a fourcc, a u16
+# AdrenoMetal runtime v2 (macOS Shader Cache app): the priming side of upstream d57b19b ("Shader Cache: Resolve overlapping
+# compute priming bindings") and 95c88a6 ("Shader Cache: Link the installed macOS VFX treatment function"), PrimeShaders.h only.
+# Upstream's own code (UniXNU/AdrenoMetal, MIT), unchanged. Why it is carried: AdrenoMetal 75149b8 (23 Nov, the runtime-v2
+# experiment) dropped "local shader priming workarounds" from PrimeShaders.h, while b25e48e (the v2 pin, UniXNU fce0acb) still
+# carries their frontend and bridge halves (nb_newFunctionForPriming:, nmb_function_new_required_constants, the missing-library
+# probe of 2e45d03). Without this half the Shader Cache app primes compute kernels with overlapping argument bindings and the
+# macOS VFX treatment function as failures again (the r2507-shader fixes, iceland's adrenometal-shader-priming-fixes.patch,
+# whose other hunks are now upstream). Applies on b25e48e alone; PrimeShaders.h is only compiled into the Shader Cache app's
+# worker, never into the plugin.
 diff --git a/PrimeShaders.h b/PrimeShaders.h
 index 7e52bf1..d56d13d 100644
 --- a/PrimeShaders.h
@@ -206,83 +175,3 @@ index 7e52bf1..d56d13d 100644
      std::set<std::string> binaryArchives;
  #if TARGET_OS_OSX
      if (wholeSystem) for (const std::string &path : paths) if (appleGpuArchive(path)) {
-diff --git a/bridge/NativeMetalObjects.h b/bridge/NativeMetalObjects.h
-index 902846e..b1a00b0 100644
---- a/bridge/NativeMetalObjects.h
-+++ b/bridge/NativeMetalObjects.h
-@@ -226,6 +226,8 @@ struct NmbConstant {uint64_t type, index; const char *name; const void *bytes; u
- NmbFunction *nmb_function_new_specialized(NmbLibrary *, const char *name, const struct NmbConstant *constants, uint32_t count);
- // The library's function with every function constant it declares set to zero (shader priming), or null.
- NmbFunction *nmb_function_new_zero_constants(NmbLibrary *, const char *name);
-+// Specialize required constants only. Set the selected scalar integer to one, or keep all zero with UINT32_MAX.
-+NmbFunction *nmb_function_new_required_constants(NmbLibrary *, const char *name, uint32_t one_index);
- /* nmb_function_new_specialized, with every declared constant the caller left out set to zero (false for a bool). */
- NmbFunction *nmb_function_new_specialized_zero_rest(NmbLibrary *, const char *name, const struct NmbConstant *constants, uint32_t count);
- void nmb_function_release(NmbFunction *);
-diff --git a/bridge/NativeMetalObjects.rs b/bridge/NativeMetalObjects.rs
-index 6645b04..8d8cc5f 100644
---- a/bridge/NativeMetalObjects.rs
-+++ b/bridge/NativeMetalObjects.rs
-@@ -1963,14 +1963,28 @@ fn constant_bytes(raw: u32) -> usize {
-     (raw - first + 1) as usize * scalar
- }
- 
--/// The library's function `name` with every function constant it declares set to zero (false for a bool), for shader priming: a
--/// function whose code uses a constant's value is otherwise refused (`NeedsInput(FunctionConstant)`), and this variant still takes its
--/// module through decoding, translation and the driver. Null when a constant's type takes no value.
-+/// Specialize every declared constant to zero for shader priming.
- ///
- /// # Safety
- /// `name` is a C string.
- #[unsafe(no_mangle)]
- pub unsafe extern "C" fn nmb_function_new_zero_constants(library: *mut NmbLibrary, name: *const c_char) -> *mut NmbFunction {
-+    // SAFETY: The caller supplies the C string.
-+    unsafe { specialize_prime_function(library, name, false, u32::MAX) }
-+}
-+
-+/// Specialize required constants and leave optional values undefined.
-+/// `one_index` is `u32::MAX` for all-zero specialization.
-+///
-+/// # Safety
-+/// `name` is a C string.
-+#[unsafe(no_mangle)]
-+pub unsafe extern "C" fn nmb_function_new_required_constants(library: *mut NmbLibrary, name: *const c_char, one_index: u32) -> *mut NmbFunction {
-+    // SAFETY: The caller supplies the C string.
-+    unsafe { specialize_prime_function(library, name, true, one_index) }
-+}
-+
-+unsafe fn specialize_prime_function(library: *mut NmbLibrary, name: *const c_char, required_only: bool, one_index: u32) -> *mut NmbFunction {
-     guard(std::ptr::null_mut(), || {
-         if name.is_null() {
-             return Err("null function name".into());
-@@ -1980,13 +1994,29 @@ pub unsafe extern "C" fn nmb_function_new_zero_constants(library: *mut NmbLibrar
-         let library = &get(library)?.0;
-         let generic = library.new_function_with_name(name).map_err(e("function"))?;
-         let mut values = FunctionConstantValues::defaults();
-+        let mut selected = one_index == u32::MAX;
-         for (key, constant) in generic.function_constants_dictionary().map_err(e("function constants"))? {
-+            if required_only && !constant.is_required() {
-+                continue;
-+            }
-             let ty = constant.data_type();
-             let bytes = constant_bytes(ty.as_raw());
-             if bytes == 0 {
-                 return Err(format!("function constant {key} of type {}", ty.as_raw()));
-             }
--            values.by_index.insert(constant.index(), FunctionConstantValue::new(ty, vec![0; bytes]));
-+            let mut value = vec![0; bytes];
-+            if one_index != u32::MAX && constant.index() == one_index {
-+                if !required_only || !constant.is_required() ||
-+                    !matches!(ty.as_raw(), 29 | 33 | 37 | 41 | 45 | 49 | 81 | 85) {
-+                    return Err("priming may set one only for a required scalar integer".into());
-+                }
-+                value[0] = 1;
-+                selected = true;
-+            }
-+            values.by_index.insert(constant.index(), FunctionConstantValue::new(ty, value));
-+        }
-+        if !selected {
-+            return Err("priming constant index was not found".into());
-         }
-         let function = library.new_function_with_name_constant_values(name, &values).map_err(e("zero-specialized function"))?;
-         Ok(boxed(NmbFunction(function)))
