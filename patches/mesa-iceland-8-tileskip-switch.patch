@@ -1,0 +1,71 @@
+# mesa-iceland-8 (ours, kit2-gpu-tileskip; MIT like the Mesa file it changes). One runtime switch for mesa-iceland-7 (UniXNU
+# #306's tile skip + scissor clip): ICE_TU_TILESKIP=0|1 in the client's environment, else the boot-arg word icetileskip=0
+# (kern.bootargs, read once per process the way UniXNU's turnip-gmem-swap-trace reads tum=), default on. Written here.
+diff --git a/src/freedreno/vulkan/tu_cmd_buffer.cc b/src/freedreno/vulkan/tu_cmd_buffer.cc
+index 2659a26..00dfa88 100644
+--- a/src/freedreno/vulkan/tu_cmd_buffer.cc
++++ b/src/freedreno/vulkan/tu_cmd_buffer.cc
+@@ -30,6 +30,9 @@
+ #include "tu_tracepoints.h"
+ #include "util/os_time.h"
+ #include "util/simple_mtx.h"
++#ifdef __APPLE__
++#include <sys/sysctl.h>
++#endif
+ 
+ enum tu_cmd_buffer_status {
+    TU_CMD_BUFFER_STATUS_IDLE = 0,
+@@ -3914,6 +3917,35 @@ tu_emit_subsampled(struct tu_cmd_buffer *cmd,
+    free(dst);
+ }
+ 
++/* iceland (mesa-iceland-8): one switch for both halves of mesa-iceland-7 (the invisible GMEM tile skip and the scissor clip
++ * of the render area). ICE_TU_TILESKIP in the client's environment wins (0/n/no/false off, anything else on); without it the
++ * boot-arg word icetileskip=0 turns both off in every process; default on. NATIVE_TURNIP_CLIP_RENDER_AREA=0 still turns only
++ * the clip off. Read once per process. */
++static bool
++tu_ice_tileskip_read(void)
++{
++   const char *env = getenv("ICE_TU_TILESKIP");
++   if (env && *env)
++      return debug_parse_bool_option(env, true);
++#ifdef __APPLE__
++   char args[1100] = {};
++   size_t size = sizeof args - 1;
++   const char *at = sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0 ? args : NULL;
++   while (at && (at = strstr(at, "icetileskip=")) && at != args && at[-1] != ' ')
++      at += 12;
++   if (at && at[12] == '0')
++      return false;
++#endif
++   return true;
++}
++
++static bool
++tu_ice_tileskip(void)
++{
++   static const bool on = tu_ice_tileskip_read();
++   return on;
++}
++
+ template <chip CHIP>
+ static void
+ tu_cmd_render_tiles(struct tu_cmd_buffer *cmd,
+@@ -4001,7 +4033,7 @@ tu_cmd_render_tiles(struct tu_cmd_buffer *cmd,
+                      continue;
+                } else {
+                   tu_calc_bin_visibility(cmd, tile, fdm_offsets);
+-                  if (!tile->visible_views)
++                  if (!tile->visible_views && tu_ice_tileskip())
+                      continue;
+                   tu_identity_frag_area(cmd, tile);
+                }
+@@ -4365,7 +4397,7 @@ tu_clip_render_area_by_scissors(struct tu_cmd_buffer *cmd)
+ {
+    static const bool clip_enabled =
+       debug_get_bool_option("NATIVE_TURNIP_CLIP_RENDER_AREA", true);
+-   if (!clip_enabled)
++   if (!clip_enabled || !tu_ice_tileskip())
+       return;
+ 
+    const struct tu_render_pass *pass = cmd->state.pass;

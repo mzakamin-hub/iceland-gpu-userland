@@ -28,6 +28,8 @@ MIT upstream file under that file's licence. Each file's header says why it exis
 | `mesa-iceland-2-ir3-round-default.patch` | Mesa, after UniXNU's record | `cov` rounds to nearest even when no rounding mode is declared (it truncated) |
 | `mesa-iceland-4-macos-service.patch` | Mesa, after UniXNU's record | Turnip's own default service on macOS is `AGXAccelerator` |
 | `mesa-iceland-5-dsb-submit.patch` | Mesa, after UniXNU's record | `dsb sy` before every Submit and at the end of `vkEndCommandBuffer` |
+| `mesa-iceland-7-turnip-skip-invisible-tiles-and-clip-render-area.patch` | Mesa, after UniXNU's record | UniXNU #306's patch byte for byte (MIT): a GMEM tile with no visible view is skipped; a single-subpass LOAD+STORE pass's render area is clipped to its draw scissors (GMEM-aligned) |
+| `mesa-iceland-8-tileskip-switch.patch` | Mesa, after mesa-iceland-7 | one switch for both halves of mesa-iceland-7: `ICE_TU_TILESKIP=0` in a client's environment, else boot-arg `icetileskip=0` for every process; default on |
 
 Six patches are retired at AdrenoMetal main `8c7f950` (R2507, 17 Nov 2026) because upstream now carries them, and their
 files are gone from `patches/`: `function-lookup-errors` (6d4a3f3), `universal-library-entries` (99da261 + 0e018dc),
