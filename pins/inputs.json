@@ -63,6 +63,11 @@
       "path": "patches/adrenometal-shader-priming-v2.patch",
       "applies_to": "drivers/AdrenoMetal",
       "sha256": "020eec1d69bbe19896aaf00bc6c7e9682bdbe9f76c5947e319911f16e31236a0"
+    },
+    "cikl_args_reflection": {
+      "path": "patches/adrenometal-cikl-args-reflection.patch",
+      "applies_to": "drivers/AdrenoMetal",
+      "sha256": "7e5b35f0399079e720e23c6f1253b8c3fbe103af38a51ecb249e293d8116e39f"
     }
   },
   "mesa_patches": {
