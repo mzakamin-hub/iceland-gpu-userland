@@ -67,7 +67,7 @@
     "cikl_args_reflection": {
       "path": "patches/adrenometal-cikl-args-reflection.patch",
       "applies_to": "drivers/AdrenoMetal",
-      "sha256": "3013e22d16d60dc6cf9f773cb3fcbcb852cd2824aa7e6586814fabc5814b6c64"
+      "sha256": "9e37114a87dfad820a7598c2fe989b0d231a79b652a40886d0fa7b329ca1cd8b"
     }
   },
   "mesa_patches": {

@@ -448,7 +448,7 @@ index 0000000..f9795ab
 +
 +}  // namespace air_signature
 diff --git a/NativeBridgeMetalFrontend.mm b/NativeBridgeMetalFrontend.mm
-index a895e80..a0724fe 100644
+index a895e80..d98a57f 100644
 --- a/NativeBridgeMetalFrontend.mm
 +++ b/NativeBridgeMetalFrontend.mm
 @@ -1089,6 +1089,47 @@ static NSString *compileArgument(NSString *text) {
@@ -531,7 +531,7 @@ index a895e80..a0724fe 100644
  @end
  @interface NBFunctionConstant : NSObject
  @property(nonatomic,copy) NSString *name;
-@@ -1951,7 +2010,327 @@ static void libraryAirBytes(NBLibrary *library,const void *bytes,size_t length)
+@@ -1951,7 +2010,328 @@ static void libraryAirBytes(NBLibrary *library,const void *bytes,size_t length)
    library.bytes=file+offset;library.length=size;return;
   }
  }
@@ -556,8 +556,7 @@ index a895e80..a0724fe 100644
 +@interface NBFunctionType : MTLType
 +@property(nonatomic) MTLDataType nbDataType;
 +@end
- @implementation NBFunction
-+ype
++@implementation NBFunctionType
 +NB_REFLECTION_ANSWERS_MISSING
 +- (MTLDataType)dataType {return _nbDataType;}
 +- (NSString *)description {return [NSString stringWithFormat:@"<NBFunctionType %lu>",(unsigned long)_nbDataType];}
@@ -577,6 +576,7 @@ index a895e80..a0724fe 100644
 + return nil;
 +}
 +- (NSString *)description {return [NSString stringWithFormat:@"<NBFunctionStructType %@ %lu members>",_nbTypeName,(unsigned long)_nbMembers.count];}
++@end
 +@interface NBFunctionTextureType : MTLTextureReferenceType
 +@property(nonatomic) MTLDataType nbTexelType;
 +@property(nonatomic) MTLTextureType nbTextureType;
@@ -842,6 +842,7 @@ index a895e80..a0724fe 100644
 + *result=made;*arguments=list;
 + return true;
 +}
+ @implementation NBFunction
 +// _MTLFunction's returnType and arguments (function reflection above): read once from the function's AIR; nil with one log line
 +// when it states no visible signature or one outside the qualified set.
 +- (void)nb_reflect {
@@ -859,7 +860,7 @@ index a895e80..a0724fe 100644
  - (NSArray *)stageInputAttributes {
   if(!_handle)return nil;
   int32_t count=nmb_function_attribute_count(_handle);if(count<=0)return nil;
-@@ -5943,6 +6322,9 @@ extern "C" id native_bridge_metal_open(const char *loader,const char *cache,uint
+@@ -5943,6 +6323,9 @@ extern "C" id native_bridge_metal_open(const char *loader,const char *cache,uint
   unsigned count=0;Method *methods=class_copyMethodList([NBDeviceMethods class],&count);
   for(unsigned i=0;i<count;i++)class_addMethod(cls,method_getName(methods[i]),method_getImplementation(methods[i]),method_getTypeEncoding(methods[i]));
   free(methods);installAnswers(cls);class_addProtocol(cls,@protocol(MTLDevice));
