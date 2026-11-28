@@ -13,9 +13,11 @@
 #    log line ("native-metal: function reflection: ..."), never a guessed one.
 #  - NOT CI_USE_MTL_DAG_FOR_CIKL_SRC=0 (piano retired it, a31d3460: SIGSEGV 0x28 in Preview and the effects grid).
 # Switch: boot-arg agx-cikl=<bits> (or NATIVE_METAL_CIKL): 1 the arguments, 2 the reflection; default 3; agx-cikl=0 = as before.
-# Also (iceland check 1): boot-arg agx-surface64=1 (or NATIVE_METAL_SURFACE64=1; OFF by default) answers
-# iosurfaceTextureAlignmentBytes 64 instead of the Mac GPU profile's 16 (fact from UniXNU NativeMetal, MIT: iconservicesagent aborts
-# when an IOSurface row pitch is not a multiple of 64 bytes); the profile's line names the value in force.
+# Also (iceland check 1): boot-arg agx-surface64=1 (or NATIVE_METAL_SURFACE64=1; OFF by default), with agx-mac-profile=1, answers
+# iosurfaceTextureAlignmentBytes 64 instead of the profile's 16 (fact from UniXNU NativeMetal, MIT: iconservicesagent aborts when an
+# IOSurface row pitch is not a multiple of 64 bytes). Installed by its own function right after installAnswers() at the device
+# class's creation, with its own line "native-metal: agx-surface64=1: IOSurface alignment 64"; no line or context of
+# adrenometal-mac-gpu-profile.patch (or any other pinned patch) is touched, so each pinned patch still reverse-checks alone.
 diff --git a/AirSignature.h b/AirSignature.h
 new file mode 100644
 index 0000000..f9795ab
@@ -446,10 +448,10 @@ index 0000000..f9795ab
 +
 +}  // namespace air_signature
 diff --git a/NativeBridgeMetalFrontend.mm b/NativeBridgeMetalFrontend.mm
-index a895e80..b29eafc 100644
+index a895e80..a0724fe 100644
 --- a/NativeBridgeMetalFrontend.mm
 +++ b/NativeBridgeMetalFrontend.mm
-@@ -1089,6 +1089,24 @@ static NSString *compileArgument(NSString *text) {
+@@ -1089,6 +1089,47 @@ static NSString *compileArgument(NSString *text) {
   NSString *escaped=[[text stringByReplacingOccurrencesOfString:@"\\" withString:@"\\\\"] stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\""];
   return [NSString stringWithFormat:@"\"%@\"",escaped];
  }
@@ -471,25 +473,55 @@ index a895e80..b29eafc 100644
 + }
 + return (bits&bit)!=0;
 +}
++#if TARGET_OS_OSX
++// iceland GAINS-28 (check 1): boot-arg agx-surface64=1 (or NATIVE_METAL_SURFACE64=1; off by default), with the Mac GPU profile on, answers
++// iosurfaceTextureAlignmentBytes 64 instead of the profile's 16. Fact from UniXNU NativeMetal (feat/a740-bringup, MIT): iconservicesagent
++// aborts when an IOSurface's row pitch is not a multiple of 64 bytes (NativeMetal answers 32 with a shadow copy). Installed after
++// installAnswers() at the device class's creation, so the profile's own table stays as it is; the read-only linear alignment stays 16.
++static bool macProfile();
++static bool surface64() {
++ static int on=-1;
++ if(on<0) {
++  const char *env=getenv("NATIVE_METAL_SURFACE64");
++  char args[1024]={};size_t size=sizeof args-1;
++  on=(env && !strcmp(env,"1")) || (sysctlbyname("kern.bootargs",args,&size,nullptr,0)==0 && strstr(args,"agx-surface64=1"));
++ }
++ return on!=0;
++}
++static NSUInteger surface64Alignment(id,SEL) {return 64;}
++static void installSurface64(Class cls) {
++ if(!macProfile() || !surface64())return;
++ const SEL sel=sel_registerName("iosurfaceTextureAlignmentBytes");
++ if(!class_addMethod(cls,sel,(IMP)surface64Alignment,"Q16@0:8"))class_replaceMethod(cls,sel,(IMP)surface64Alignment,"Q16@0:8");
++ GLOG(@"native-metal: agx-surface64=1: IOSurface alignment 64");
++}
++#endif
  static NSString *compileArguments(MTLCompileOptions *options) {
   NSMutableArray<NSString *> *arguments=[NSMutableArray arrayWithObjects:@"--driver-mode=metal",@"-x",@"metal",nil];
   const NSUInteger version=options && options.languageVersion?(NSUInteger)options.languageVersion:(NSUInteger)MTLLanguageVersion3_1;
-@@ -1132,6 +1150,14 @@ static NSString *compileArguments(MTLCompileOptions *options) {
-   if(options && [options respondsToSelector:selector]) {
-    id extra=((id (*)(id,SEL))objc_msgSend)(options,selector);
-    if([extra isKindOfClass:[NSArray class]])for(id argument in (NSArray *)extra)if([argument isKindOfClass:[NSString class]])[arguments addObject:compileArgument(argument)];
-+   // GAINS-28 A (piano 0009, agx-cikl bit 1): Core Image passes additionalCompilerArguments as ONE NSString of already-tokenized
-+   // compiler syntax (its runtime header's own macro definitions), not an array; appended unquoted, as the caller wrote it.
-+   else if([extra isKindOfClass:[NSString class]] && [(NSString *)extra length] && [name isEqualToString:@"additionalCompilerArguments"] &&
-+           ciklOn(1)) {
-+    [arguments addObject:(NSString *)extra];
-+    static std::atomic_flag noted=ATOMIC_FLAG_INIT;
-+    if(!noted.test_and_set(std::memory_order_relaxed))os_log(OS_LOG_DEFAULT,"native-metal: compiler-extra-args-v1 forwarded");
-+   }
-   }
-  }
-  return [arguments componentsJoinedByString:@" "];
-@@ -1917,6 +1943,9 @@ static void noteUnalignedTexture(MTLTextureDescriptor *d,NSUInteger offset,NSUIn
+@@ -1139,6 +1180,21 @@ static NSString *compileArguments(MTLCompileOptions *options) {
+ static NSError *nbError(NSString *why) {
+  return [NSError errorWithDomain:@"org.blu-sharky.native-metal" code:-1 userInfo:@{NSLocalizedDescriptionKey:why?:@"refused"}];
+ }
++// GAINS-28 A (piano 0009, agx-cikl bit 1): Core Image passes additionalCompilerArguments as ONE NSString of already-tokenized compiler
++// syntax (its runtime header's own macro definitions), not an array, and compileArguments() above takes only an NSArray. The string is
++// appended unquoted, as the caller wrote it, after everything compileArguments() made (the place piano's loop puts it). A wrapper, so
++// adrenometal-source-compile-frameworks.patch's loop stays byte for byte; the later caller reaches it through the macro below.
++static NSString *ciklCompileArguments(MTLCompileOptions *options) {
++ NSString *text=compileArguments(options);
++ const SEL selector=NSSelectorFromString(@"additionalCompilerArguments");
++ if(!ciklOn(1) || !options || ![options respondsToSelector:selector])return text;
++ id extra=((id (*)(id,SEL))objc_msgSend)(options,selector);
++ if(![extra isKindOfClass:[NSString class]] || ![(NSString *)extra length])return text;
++ static std::atomic_flag noted=ATOMIC_FLAG_INIT;
++ if(!noted.test_and_set(std::memory_order_relaxed))os_log(OS_LOG_DEFAULT,"native-metal: compiler-extra-args-v1 forwarded");
++ return [text stringByAppendingFormat:@" %@",(NSString *)extra];
++}
++#define compileArguments(options) ciklCompileArguments(options)
+ static NSString *lastError() {return [NSString stringWithUTF8String:nmb_last_error()];}
+ // The render pipeline journal: one line per render pipeline creation (when, on which thread, how long, the outcome, both functions with
+ // every constant value, the attachments, blending and vertex descriptor) appended to pipelines.log in the runtime's cache directory, which
+@@ -1917,6 +1973,9 @@ static void noteUnalignedTexture(MTLTextureDescriptor *d,NSUInteger offset,NSUIn
  @property(nonatomic,strong) NBLibrary *library;      // where it came from (stitching reads its bitcode), and the values it was
  @property(nonatomic,strong) NSData *bitCodeHashData;
  @property(nonatomic,strong) MTLFunctionConstantValues *constantValues;   // specialized with (nil: none), for the zero-rest rebuild of a refused pipeline
@@ -499,7 +531,7 @@ index a895e80..b29eafc 100644
  @end
  @interface NBFunctionConstant : NSObject
  @property(nonatomic,copy) NSString *name;
-@@ -1951,7 +1980,327 @@ static void libraryAirBytes(NBLibrary *library,const void *bytes,size_t length)
+@@ -1951,7 +2010,327 @@ static void libraryAirBytes(NBLibrary *library,const void *bytes,size_t length)
    library.bytes=file+offset;library.length=size;return;
   }
  }
@@ -827,44 +859,13 @@ index a895e80..b29eafc 100644
  - (NSArray *)stageInputAttributes {
   if(!_handle)return nil;
   int32_t count=nmb_function_attribute_count(_handle);if(count<=0)return nil;
-@@ -5622,6 +5971,20 @@ static NSUInteger macLinearAlignment(id,SEL cmd,NSUInteger format) {
- // compiler version), which the profile's missing function pointers keep Core Image from building.
- static uint64_t macFeatureProfile(id,SEL) {return 10001;}
- static NSUInteger macSurfaceAlignment(id,SEL) {return 16;}
-+// iceland GAINS-28 (check 1): boot-arg agx-surface64=1 (or NATIVE_METAL_SURFACE64=1; off by default) answers iosurfaceTextureAlignmentBytes 64
-+// instead of 16. Fact from UniXNU NativeMetal (feat/a740-bringup, MIT): iconservicesagent aborts when an IOSurface's row pitch is not a
-+// multiple of 64 bytes (NativeMetal answers 32 with a shadow copy); with 16 a narrow surface can get such a pitch. The read-only linear
-+// alignment stays 16.
-+static bool surface64() {
-+ static int on=-1;
-+ if(on<0) {
-+  const char *env=getenv("NATIVE_METAL_SURFACE64");
-+  char args[1024]={};size_t size=sizeof args-1;
-+  on=(env && !strcmp(env,"1")) || (sysctlbyname("kern.bootargs",args,&size,nullptr,0)==0 && strstr(args,"agx-surface64=1"));
-+ }
-+ return on!=0;
-+}
-+static NSUInteger macSurfaceAlignmentIOSurface(id self,SEL cmd) {return surface64()?64:macSurfaceAlignment(self,cmd);}
- static BOOL macNo(id,SEL) {return NO;}
- // Framebuffer fetch stays the runtime's own answer under the profile (yes on Turnip: it reads a color attachment in rasterization order).
- // The profile first answered NO, and the tablet's first desktop drawn wholly on the GPU (run w3-combined-1-datareset, 15 Nov) had every
-@@ -5767,7 +6130,7 @@ static void installAnswers(Class cls) {
-   // installed here, before the IOGPU shim adds its featureProfile 0 (it adds only what the device does not answer)
-   const struct {const char *name;IMP imp;const char *types;} fixed[]={
-    {"featureProfile",(IMP)macFeatureProfile,"Q16@0:8"},
--   {"iosurfaceTextureAlignmentBytes",(IMP)macSurfaceAlignment,"Q16@0:8"},
-+   {"iosurfaceTextureAlignmentBytes",(IMP)macSurfaceAlignmentIOSurface,"Q16@0:8"},
-    {"deviceLinearReadOnlyTextureAlignmentBytes",(IMP)macSurfaceAlignment,"Q16@0:8"},
-    {"supportsMemorylessRenderTargets",(IMP)macNo,"B16@0:8"},
-   };
-@@ -5785,8 +6148,8 @@ static void installAnswers(Class cls) {
-    macDisableGenericShaders();
-   }
-   GLOG(@"native-metal: Mac GPU profile (agx-mac-profile=1): Common1-3 and Mac2 (featureProfile 10001), no Apple family, linear rows of 64 "
--      "bytes or more, IOSurface and read-only linear alignment 16, no memoryless targets, framebuffer fetch %s",
--      fetches?"as the runtime answers (yes)":"NO (CA_DISABLE_GENERIC_SHADERS)");
-+      "bytes or more, IOSurface alignment %u (agx-surface64), read-only linear alignment 16, no memoryless targets, framebuffer fetch %s",
-+      surface64()?64u:16u,fetches?"as the runtime answers (yes)":"NO (CA_DISABLE_GENERIC_SHADERS)");
-  }
- #endif
- }
+@@ -5943,6 +6322,9 @@ extern "C" id native_bridge_metal_open(const char *loader,const char *cache,uint
+  unsigned count=0;Method *methods=class_copyMethodList([NBDeviceMethods class],&count);
+  for(unsigned i=0;i<count;i++)class_addMethod(cls,method_getName(methods[i]),method_getImplementation(methods[i]),method_getTypeEncoding(methods[i]));
+  free(methods);installAnswers(cls);class_addProtocol(cls,@protocol(MTLDevice));
++#if TARGET_OS_OSX
++ installSurface64(cls);   // iceland GAINS-28 (check 1): agx-surface64=1, after the profile's answers
++#endif
+  // The original registration (_MTLAddDevice) asserts that a plugin's device conforms to Metal's private device protocol as well; the target's own
+  // drivers get it from their IOGPU base class. Conformance only answers conformsToProtocol:, the methods are still looked up one by one.
+  if(Protocol *spi=objc_getProtocol("MTLDeviceSPI"))class_addProtocol(cls,spi);
